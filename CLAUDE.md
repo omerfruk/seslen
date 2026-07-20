@@ -107,10 +107,17 @@ kararlı bir paket kimliği olmadan çalışmaz.
 Canlıya çıkış **elle** yapılır, her push'ta değil:
 
 ```bash
-./yayinla.sh 0.1.3            # sunucu + uygulama + brew tap
-./yayinla.sh 0.1.3 --deneme   # ne yapacağını gösterir, yayınlamaz
-./yayinla.sh --sunucu         # yalnızca sunucuyu günceller
+./yayinla.sh            # yama artır (0.1.3 → 0.1.4), sunucu + uygulama + brew
+./yayinla.sh --yan      # yan sürüm artır (0.1.3 → 0.2.0)
+./yayinla.sh --ana      # ana sürüm artır (0.1.3 → 1.0.0)
+./yayinla.sh --deneme   # ne yapacağını gösterir, yayınlamaz
+./yayinla.sh --sunucu   # yalnızca sunucuyu günceller
+./yayinla.sh 0.4.0      # sürümü elle belirt
 ```
+
+Sürüm numarası son git etiketinden okunup artırılır; elle yazmak gerekmez.
+Etiketler `--sort=v:refname` ile sıralanır — alfabetik sıralama v0.1.10'u
+v0.1.9'dan önce koyardı.
 
 Betik sırasıyla: ön kontroller (temiz dizin, origin/main eşleşmesi, etiket
 çakışması, sunucu erişimi) → testler → sunucuya kurulum + sağlık ve WebSocket

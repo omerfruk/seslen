@@ -15,8 +15,9 @@ yardim:
 	@echo "  make dmg        Dağıtım DMG'si üretir         → $(CIKIS)/Seslen-<surum>.dmg"
 	@echo "  make temizle    Üretilen dosyaları siler"
 	@echo ""
-	@echo "  ./yayinla.sh 0.1.3        Canlıya çıkar (sunucu + uygulama + brew)"
-	@echo "  ./yayinla.sh 0.1.3 --deneme  Ne yapacağını gösterir, yayınlamaz"
+	@echo "  ./yayinla.sh              Canlıya çıkar — sürümü etiketlerden otomatik artırır"
+	@echo "  ./yayinla.sh --deneme     Ne yapacağını gösterir, yayınlamaz"
+	@echo "  ./yayinla.sh --yan|--ana  Yan/ana sürüm artırır"
 	@echo "  ./yayinla.sh --sunucu     Yalnızca sunucuyu günceller"
 
 test:
@@ -50,7 +51,6 @@ temizle:
 	cd $(SUNUCU_DIZIN) && go clean
 
 # Canlıya çıkar. Elle çalıştırılır, her push'ta değil.
-#   make yayinla SURUM=0.1.3
+# Sürüm etiketlerden otomatik hesaplanır; SURUM=0.4.0 ile elle verilebilir.
 yayinla:
-	@test -n "$(SURUM)" || { echo "Kullanım: make yayinla SURUM=0.1.3"; exit 1; }
 	./yayinla.sh $(SURUM)
