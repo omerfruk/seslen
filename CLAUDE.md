@@ -125,6 +125,7 @@ doğrulaması → DMG → git etiketi → GitHub release → Homebrew tap günce
 
 Herhangi bir adım hata verirse durur (`set -euo pipefail`).
 
-Sunucu: `deploy@204.168.229.111:/srv/seslen`, Traefik arkasında
-`https://seslen.cidaltime.com`. Farklı bir hedef için `SESLEN_SSH` ve
-`SESLEN_ALAN` ortam değişkenleri kullanılır.
+Sunucu hedefi depoda **tutulmaz**. `.yayinla.ornek` dosyasını `.yayinla.yerel`
+olarak kopyalayıp `SESLEN_SSH` ve `SESLEN_ALAN` değerlerini doldurun; bu dosya
+git tarafından yok sayılır. Sunucuda proje `/srv/seslen` altında, Traefik'in
+arkasında çalışır.

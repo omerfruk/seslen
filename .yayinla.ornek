@@ -1,0 +1,12 @@
+# Yayınlama hedefleri. Bu dosyayı `.yayinla.yerel` olarak kopyalayıp doldurun:
+#
+#   cp .yayinla.ornek .yayinla.yerel
+#
+# `.yayinla.yerel` git tarafından yok sayılır; sunucu bilgileri public depoya
+# girmesin diye böyle ayrıldı.
+
+# Sunucuya SSH ile bağlanma hedefi
+SESLEN_SSH="deploy@sunucu.adresiniz"
+
+# Uygulamanın bağlandığı alan adı (Traefik bu adı yönlendirir)
+SESLEN_ALAN="seslen.alanadiniz.com"

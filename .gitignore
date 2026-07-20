@@ -17,3 +17,6 @@ cikti/
 *.xcodeproj/
 .swiftpm/
 Package.resolved
+
+# Yayınlama hedefleri (sunucu adresi, alan adı) — depoya girmez
+.yayinla.yerel

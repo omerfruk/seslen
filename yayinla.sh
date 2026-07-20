@@ -11,17 +11,29 @@
 #   ./yayinla.sh --sunucu   → yalnızca sunucuyu günceller, sürüm üretmez
 #   ./yayinla.sh --uygulama → yalnızca macOS uygulamasını yayınlar
 #
-# Ortam değişkenleriyle geçersiz kılınabilir:
-#   SESLEN_SSH   (varsayılan deploy@204.168.229.111)
-#   SESLEN_ALAN  (varsayılan seslen.cidaltime.com)
+# Sunucu bilgileri depoda tutulmaz. Bunun yerine `.yayinla.yerel` dosyasından
+# ya da ortam değişkenlerinden okunur:
+#
+#   SESLEN_SSH   ör. deploy@sunucu.adresi
+#   SESLEN_ALAN  ör. seslen.ornek.com
+#
+# İlk kurulumda `.yayinla.ornek` dosyasını `.yayinla.yerel` olarak kopyalayıp
+# kendi değerlerinizi yazın. `.yayinla.yerel` git tarafından yok sayılır.
 
 set -euo pipefail
 
 KOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$KOK"
 
-SSH_HEDEF="${SESLEN_SSH:-deploy@204.168.229.111}"
-ALAN="${SESLEN_ALAN:-seslen.cidaltime.com}"
+# Yerel yapılandırma varsa yükle. Depoya girmediği için sunucu adresi ve
+# kullanıcı adı public depoda görünmez.
+if [[ -f "$KOK/.yayinla.yerel" ]]; then
+  # shellcheck source=/dev/null
+  source "$KOK/.yayinla.yerel"
+fi
+
+SSH_HEDEF="${SESLEN_SSH:-}"
+ALAN="${SESLEN_ALAN:-}"
 TAP_DEPO="https://github.com/omerfruk/homebrew-seslen.git"
 SUNUCU_DIZIN="/srv/seslen"
 
@@ -111,6 +123,15 @@ fi
 
 # --- Ön kontroller ---
 baslik "Ön kontroller"
+
+# Sunucu bilgileri depoda olmadığı için önce onların tanımlı olduğundan
+# emin oluyoruz; aksi halde betik yarı yolda anlamsız bir hatayla düşer.
+if [[ $YALNIZ_UYGULAMA -eq 0 && -z "$SSH_HEDEF" ]]; then
+  hata "sunucu adresi tanımsız. '.yayinla.ornek' dosyasını '.yayinla.yerel' olarak kopyalayıp doldurun (ya da SESLEN_SSH verin)."
+fi
+if [[ $YALNIZ_UYGULAMA -eq 0 && -z "$ALAN" ]]; then
+  hata "alan adı tanımsız. '.yayinla.yerel' içine SESLEN_ALAN yazın."
+fi
 
 command -v gh >/dev/null || hata "gh (GitHub CLI) kurulu değil"
 gh auth status >/dev/null 2>&1 || hata "gh yetkili değil. 'gh auth login' çalıştırın."
