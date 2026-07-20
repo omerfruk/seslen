@@ -1,0 +1,6 @@
+*.db
+*.db-wal
+*.db-shm
+*_test.go
+Dockerfile
+.dockerignore

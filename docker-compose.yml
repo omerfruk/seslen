@@ -1,0 +1,58 @@
+# Seslen sunucusu.
+#
+# Sunucuda başka projeler de çalıştığı için Seslen kendi portunu dışarı
+# açmaz; TLS sonlandırmayı ve yönlendirmeyi mevcut ters vekil yapar.
+# Aşağıda iki yaygın kurulum için de hazır ayar var — hangisini
+# kullanıyorsan onu aç, diğerini kapalı bırak.
+
+services:
+  seslen:
+    build:
+      context: ./seslen-sunucu
+    image: seslen-sunucu:latest
+    container_name: seslen
+    restart: unless-stopped
+
+    environment:
+      SESLEN_ADRES: ":8787"
+      SESLEN_VT: "/veri/seslen.db"
+      TZ: "Europe/Istanbul"
+
+    volumes:
+      # Veritabanı burada durur; kap silinse de veri kaybolmaz.
+      - seslen-veri:/veri
+
+    # --- SEÇENEK A: Ters vekil aynı Docker ağındaysa (önerilen) ---
+    # Port dışarı açılmaz, yalnızca vekil erişir. Vekilin ağının adını yaz.
+    networks:
+      - seslen-agi
+      # - vekil-agi
+
+    # --- SEÇENEK B: Ters vekil ana makinede (nginx/Caddy sistemde kurulu) ---
+    # Yalnızca 127.0.0.1'e bağla ki port internete açılmasın.
+    ports:
+      - "127.0.0.1:8787:8787"
+
+    # --- Traefik kullanıyorsan bu etiketleri aç ---
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.seslen.rule=Host(`seslen.ornek.com`)"
+    #   - "traefik.http.routers.seslen.entrypoints=websecure"
+    #   - "traefik.http.routers.seslen.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.seslen.loadbalancer.server.port=8787"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  seslen-veri:
+
+networks:
+  seslen-agi:
+    driver: bridge
+  # Mevcut ters vekilin ağına katılmak için:
+  # vekil-agi:
+  #   external: true

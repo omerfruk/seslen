@@ -104,7 +104,66 @@ Uygulama üç senaryoyu da destekler; Ayarlar → Genel'den değiştirilir:
 
 ---
 
-## Sunucuyu kalıcı çalıştırma (Linux)
+## Sunucuyu kalıcı çalıştırma (Docker)
+
+```bash
+git clone https://github.com/omerfruk/seslen.git
+cd seslen
+docker compose up -d
+```
+
+Bu kadar. Sunucu `127.0.0.1:8787`'de dinler, veritabanı `seslen-veri`
+biriminde durur, kap kendiliğinden yeniden başlar.
+
+**Durumu görmek:**
+
+```bash
+docker compose ps          # sağlık durumu (healthy görmelisiniz)
+docker compose logs -f     # canlı günlük
+```
+
+**Güncellemek:**
+
+```bash
+git pull && docker compose up -d --build
+```
+
+### Ters vekil
+
+Sunucuda başka projeler de çalıştığı için Seslen portu internete açmaz.
+TLS sonlandırmayı mevcut vekiliniz yapar. `docker-compose.yml` içinde iki
+senaryo için de hazır ayar var:
+
+- **Vekil aynı Docker ağındaysa** — `networks` altındaki `vekil-agi` satırını
+  açın ve `ports` bölümünü kaldırın. Traefik kullanıyorsanız `labels`
+  bloğunu da açın.
+- **Vekil ana makinedeyse** — varsayılan ayar zaten bu; port yalnızca
+  `127.0.0.1`'e bağlıdır.
+
+Caddy örneği:
+
+```
+seslen.ornek.com {
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+nginx örneği — **WebSocket başlıkları şart**, yoksa bağlantı kurulmaz:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;   # bağlantılar uzun ömürlüdür
+}
+```
+
+Caddy bu başlıkları kendiliğinden geçirir, ek ayar gerekmez.
+
+### Docker olmadan (systemd)
 
 ```ini
 # /etc/systemd/system/seslen.service
@@ -123,20 +182,6 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
-
-```bash
-sudo systemctl enable --now seslen
-```
-
-Önüne TLS sonlandıran bir ters vekil (Caddy/nginx) koyun. Caddy örneği:
-
-```
-seslen.ornek.com {
-    reverse_proxy 127.0.0.1:8787
-}
-```
-
-Caddy WebSocket yükseltmesini kendiliğinden geçirir, ek ayar gerekmez.
 
 ---
 
