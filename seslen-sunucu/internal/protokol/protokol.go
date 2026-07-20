@@ -15,6 +15,7 @@ type Tip string
 // İstemciden sunucuya giden mesaj tipleri.
 const (
 	TipSeslen       Tip = "seslen"        // birine seslen
+	TipHaykir       Tip = "haykir"        // kurumdaki herkese birden seslen
 	TipYanitla      Tip = "yanitla"       // gelen çağrıya yanıt ver
 	TipDurumBildir  Tip = "durum_bildir"  // kendi durumunu değiştir
 	TipUyeGuncelle  Tip = "uye_guncelle"  // (yönetim) üye rolü/yetkisi değiştir
@@ -46,6 +47,12 @@ type SeslenIstek struct {
 	AliciID string       `json:"aliciID"`
 	Seviye  model.Seviye `json:"seviye"`
 	Not     string       `json:"not"`
+}
+
+// HaykirIstek, kurumdaki herkese aynı anda seslenme talebidir.
+// Seviye taşımaz: yayın her zaman normal seviyede gider.
+type HaykirIstek struct {
+	Not string `json:"not"`
 }
 
 // YanitlaIstek, gelen bir çağrıya verilen cevaptır.
@@ -89,6 +96,9 @@ type SeslenmeGeldiVeri struct {
 	Seviye      model.Seviye `json:"seviye"`
 	Not         string       `json:"not"`
 	Gonderildi  int64        `json:"gonderildi"` // unix saniye
+	// Yayin, çağrının tek kişiye değil kurumdaki herkese gittiğini söyler.
+	// İstemci uyarıyı buna göre "haykırdı" diye yazar.
+	Yayin bool `json:"yayin"`
 }
 
 // YanitGeldiVeri, gönderene dönen cevaptır.

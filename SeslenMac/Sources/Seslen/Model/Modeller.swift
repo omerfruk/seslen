@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Seslenmenin aciliyet seviyesi. Sunucudaki `model.Seviye` ile birebir eşleşir.
 enum Seviye: String, Codable, CaseIterable, Sendable {
@@ -19,6 +20,16 @@ enum Seviye: String, Codable, CaseIterable, Sendable {
         case .normal: "bubble.left.fill"
         case .onemli: "exclamationmark.triangle.fill"
         case .acil: "exclamationmark.octagon.fill"
+        }
+    }
+
+    /// Seviyenin arayüz boyunca kullanılan rengi. `simge` gibi bu da sunucuda
+    /// karşılığı olmayan, yalnızca gösterime ait bir bilgidir.
+    var renk: Color {
+        switch self {
+        case .normal: .blue
+        case .onemli: .orange
+        case .acil: .red
         }
     }
 
@@ -167,6 +178,8 @@ struct Seslenme: Identifiable, Sendable, Equatable {
     var seviye: Seviye
     var not: String
     var geldiginde: Date
+    /// Kurumdaki herkese giden bir yayın mı? Uyarı metni buna göre değişir.
+    var yayin: Bool = false
 }
 
 /// Alıcının çağrıya verebileceği hazır cevaplar.

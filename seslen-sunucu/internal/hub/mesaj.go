@@ -13,11 +13,25 @@ import (
 // maksNotUzunlugu, seslenmeye eklenen kısa notun sınırıdır.
 const maksNotUzunlugu = 140
 
+// notKisalt, kullanıcının yazdığı notu kırpar ve sınıra sığdırır.
+// Sınır harf sayısına göredir: bayt sayarak kesmek Türkçe harflerin
+// ortasından bölüp bozuk UTF-8 üretebilir.
+func notKisalt(ham string) string {
+	not := strings.TrimSpace(ham)
+	harfler := []rune(not)
+	if len(harfler) > maksNotUzunlugu {
+		not = string(harfler[:maksNotUzunlugu])
+	}
+	return not
+}
+
 // mesajIsle, istemciden gelen bir zarfı ilgili işleyiciye yönlendirir.
 func (h *Hub) mesajIsle(b *Baglanti, zarf protokol.Zarf) {
 	switch zarf.Tip {
 	case protokol.TipSeslen:
 		h.seslenIsle(b, zarf.Veri)
+	case protokol.TipHaykir:
+		h.haykirIsle(b, zarf.Veri)
 	case protokol.TipYanitla:
 		h.yanitlaIsle(b, zarf.Veri)
 	case protokol.TipDurumBildir:
@@ -85,18 +99,13 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 		return
 	}
 
-	not := strings.TrimSpace(istek.Not)
-	if len(not) > maksNotUzunlugu {
-		not = not[:maksNotUzunlugu]
-	}
-
 	cagri := model.Cagri{
 		ID:         store.YeniCagriID(),
 		KurumID:    gonderen.KurumID,
 		GonderenID: gonderen.ID,
 		AliciID:    alici.ID,
 		Seviye:     istek.Seviye,
-		Not:        not,
+		Not:        notKisalt(istek.Not),
 		Gonderildi: time.Now(),
 	}
 	if err := h.depo.CagriKaydet(cagri); err != nil {
@@ -127,6 +136,84 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 
 	h.kayit.Info("seslenme iletildi",
 		"gonderen", gonderen.AdSoyad, "alici", alici.AdSoyad, "seviye", cagri.Seviye)
+}
+
+// haykirIsle, kurumdaki herkese aynı anda seslenir.
+//
+// Seviye kasten sabit (normal) ve yetki aranmaz: yayın herkesi ilgilendirdiği
+// için en hafif biçimde gider, kimsenin ekranını kesmez. Seviye seçilebilseydi
+// tek tıkla bütün ekibe tam ekran ACİL uyarı basmak mümkün olurdu.
+func (h *Hub) haykirIsle(b *Baglanti, ham json.RawMessage) {
+	var istek protokol.HaykirIstek
+	if err := json.Unmarshal(ham, &istek); err != nil {
+		b.hata(protokol.HataGecersiz, "istek çözümlenemedi")
+		return
+	}
+
+	gonderen, err := h.depo.UyeGetir(b.uyeID)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "gönderen okunamadı")
+		return
+	}
+	if !gonderen.Onayli {
+		b.hata(protokol.HataYetkisiz, "üyeliğiniz henüz onaylanmadı")
+		return
+	}
+
+	uyeler, err := h.depo.UyeleriGetir(gonderen.KurumID)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "üyeler okunamadı")
+		return
+	}
+
+	not := notKisalt(istek.Not)
+	simdi := time.Now()
+	ulasan := 0
+
+	for _, alici := range uyeler {
+		if alici.ID == gonderen.ID {
+			continue
+		}
+
+		cagri := model.Cagri{
+			ID:         store.YeniCagriID(),
+			KurumID:    gonderen.KurumID,
+			GonderenID: gonderen.ID,
+			AliciID:    alici.ID,
+			Seviye:     model.SeviyeNormal,
+			Not:        not,
+			Gonderildi: simdi,
+		}
+		if err := h.depo.CagriKaydet(cagri); err != nil {
+			h.kayit.Error("yayın çağrısı kaydedilemedi", "alici", alici.ID, "hata", err)
+			continue
+		}
+
+		mesaj, err := protokol.Paketle(protokol.TipSeslenmeGeldi, protokol.SeslenmeGeldiVeri{
+			CagriID:    cagri.ID,
+			GonderenID: gonderen.ID,
+			GonderenAd: gonderen.AdSoyad,
+			Seviye:     cagri.Seviye,
+			Not:        cagri.Not,
+			Gonderildi: cagri.Gonderildi.Unix(),
+			Yayin:      true,
+		})
+		if err != nil {
+			continue
+		}
+		// Çevrimdışı üyeye ulaşamamak yayını başarısız yapmaz; tek kişilik
+		// seslenmeden farkı bu.
+		if h.UyeyeGonder(alici.ID, mesaj) {
+			ulasan++
+		}
+	}
+
+	if ulasan == 0 {
+		b.hata(protokol.HataBulunamadi, "şu anda çevrimiçi kimse yok")
+		return
+	}
+
+	h.kayit.Info("yayın iletildi", "gonderen", gonderen.AdSoyad, "ulasan", ulasan)
 }
 
 // yanitlaIsle, alıcının çağrıya verdiği cevabı gönderene ulaştırır.

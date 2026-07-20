@@ -288,7 +288,8 @@ final class SunucuIstemcisi {
                 gonderenAd: gelen.gonderenAd,
                 seviye: gelen.seviye,
                 not: gelen.not,
-                geldiginde: Date(timeIntervalSince1970: TimeInterval(gelen.gonderildi))
+                geldiginde: Date(timeIntervalSince1970: TimeInterval(gelen.gonderildi)),
+                yayin: gelen.yayin
             ))
 
         case .yanitGeldi:
@@ -329,6 +330,11 @@ final class SunucuIstemcisi {
     /// Bir üyeye seslenir.
     func seslen(aliciID: String, seviye: Seviye, not: String = "") {
         yolla(.seslen, SeslenIstek(aliciID: aliciID, seviye: seviye, not: not))
+    }
+
+    /// Kurumdaki herkese birden seslenir. Seviye sunucuda sabittir (normal).
+    func haykir(not: String = "") {
+        yolla(.haykir, HaykirIstek(not: not))
     }
 
     /// Gelen bir çağrıyı yanıtlar.

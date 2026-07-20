@@ -292,3 +292,80 @@ func TestAyniIsimReddedilir(t *testing.T) {
 		t.Errorf("aynı isim reddedilmeliydi, gelen durum: %d", kod)
 	}
 }
+
+// TestHaykirmaAkisi, herkese yayının kurumdaki diğer üyelere ulaştığını,
+// gönderene geri dönmediğini ve onaysız üyeye kapalı olduğunu doğrular.
+func TestHaykirmaAkisi(t *testing.T) {
+	o := ortamKur(t)
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer Faruk Taşdemir",
+	})
+	omerToken := yanit["token"].(string)
+	omerID := yanit["ben"].(map[string]any)["id"].(string)
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	katil := func(ad string) (token, id string) {
+		_, y := o.gonderJSON("/api/kurum/katil", map[string]string{
+			"kod": katilimKodu, "adSoyad": ad,
+		})
+		return y["token"].(string), y["ben"].(map[string]any)["id"].(string)
+	}
+	aliToken, aliID := katil("Ali Veli")
+	ayseToken, ayseID := katil("Ayşe Yılmaz")
+
+	omer := o.baglan(omerToken, omerID)
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	ali := o.baglan(aliToken, aliID)
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Onaysız üye haykıramaz.
+	ali.yolla(protokol.TipHaykir, protokol.HaykirIstek{Not: "erkenden"})
+	hataZarf := ali.bekle(protokol.TipHata, 2*time.Second)
+	var hata protokol.HataVeri
+	json.Unmarshal(hataZarf.Veri, &hata)
+	if hata.Kod != protokol.HataYetkisiz {
+		t.Errorf("onaysız üyenin haykırması reddedilmeliydi, gelen kod: %q", hata.Kod)
+	}
+
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: aliID})
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	ayse := o.baglan(ayseToken, ayseID)
+	ayse.bekle(protokol.TipDurumTam, 2*time.Second)
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: ayseID})
+	ayse.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Sıradan üye de haykırabilir: yayın yetki gerektirmez.
+	ali.yolla(protokol.TipHaykir, protokol.HaykirIstek{Not: "toplantı başlıyor"})
+
+	for _, alici := range []struct {
+		ad string
+		c  *istemci
+	}{{"Ömer", omer}, {"Ayşe", ayse}} {
+		zarf := alici.c.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+		var gelen protokol.SeslenmeGeldiVeri
+		json.Unmarshal(zarf.Veri, &gelen)
+		if !gelen.Yayin {
+			t.Errorf("%s yayın bayrağını almalıydı: %+v", alici.ad, gelen)
+		}
+		if gelen.Seviye != model.SeviyeNormal {
+			t.Errorf("%s: yayın normal seviyede gitmeli, gelen: %q", alici.ad, gelen.Seviye)
+		}
+		if gelen.GonderenAd != "Ali Veli" || gelen.Not != "toplantı başlıyor" {
+			t.Errorf("%s: yayın içeriği hatalı: %+v", alici.ad, gelen)
+		}
+	}
+
+	// Gönderen kendi yayınını almamalı. Ömer'in doğrudan seslenmesi Ali'ye ulaşan
+	// ilk çağrı olmalı; yayın da gelseydi sırada ondan önce dururdu.
+	omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: aliID, Seviye: model.SeviyeNormal, Not: "sadece sana",
+	})
+	zarf := ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+	var aliyeGelen protokol.SeslenmeGeldiVeri
+	json.Unmarshal(zarf.Veri, &aliyeGelen)
+	if aliyeGelen.Yayin || aliyeGelen.Not != "sadece sana" {
+		t.Errorf("gönderen kendi yayınını almamalı, Ali'ye ulaşan: %+v", aliyeGelen)
+	}
+}

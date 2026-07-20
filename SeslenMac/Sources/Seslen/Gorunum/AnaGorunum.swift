@@ -9,6 +9,8 @@ struct AnaGorunum: View {
 
     /// Seslenme hazırlanan kişi. Nil ise kişi listesi görünür.
     @State private var secilenUye: Uye?
+    /// Herkese haykırma ekranı açık mı?
+    @State private var haykirmaAcik = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +20,8 @@ struct AnaGorunum: View {
                 OnayBekleniyorGorunumu()
             } else if let uye = secilenUye {
                 SeslenmeHazirla(uye: uye) { secilenUye = nil }
+            } else if haykirmaAcik {
+                HaykirHazirla { haykirmaAcik = false }
             } else {
                 kisiListesi
             }
@@ -53,6 +57,8 @@ struct AnaGorunum: View {
                 hataSeridi(hata)
             }
 
+            haykirSeridi
+
             Divider()
 
             if istemci.digerUyeler.isEmpty {
@@ -61,18 +67,57 @@ struct AnaGorunum: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(istemci.digerUyeler) { uye in
-                            UyeSatiri(uye: uye) { secilenUye = uye }
+                            UyeSatiri(
+                                uye: uye,
+                                yetkim: yetkim,
+                                hizliSeslen: { istemci.seslen(aliciID: uye.id, seviye: $0) },
+                                detay: { secilenUye = uye }
+                            )
                         }
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
                 }
-                .frame(maxHeight: 320)
+                // ScrollView tek başına bırakılınca kalan alana sıkışıp içeriğinden
+                // kısa kalıyor; asgari yükseklik listeyi olduğu kadar açık tutar.
+                .frame(minHeight: listeAsgariYuksekligi, maxHeight: 460)
             }
 
             Divider()
             durumSecici
         }
+    }
+
+    /// Kullanıcının gönderebileceği en yüksek seviye.
+    private var yetkim: Seviye {
+        istemci.ben?.maxSeviye ?? .normal
+    }
+
+    /// Listenin sıkışmaması için gereken yükseklik; kişi az ise boşluk da bırakmaz.
+    private var listeAsgariYuksekligi: CGFloat {
+        let satirYuksekligi: CGFloat = 46
+        return min(CGFloat(istemci.digerUyeler.count) * satirYuksekligi + 12, 380)
+    }
+
+    private var haykirSeridi: some View {
+        Button {
+            haykirmaAcik = true
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "megaphone.fill")
+                Text("Herkese haykır")
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.purple)
+        .background(Color.purple.opacity(0.14))
+        .disabled(!istemci.baglanti.iyi)
     }
 
     private var baslik: some View {
@@ -212,15 +257,19 @@ struct AnaGorunum: View {
 
 // MARK: - Üye satırı
 
-/// Kişi listesindeki tek bir satır.
+/// Kişi listesindeki tek bir satır. Sağdaki düğmeler tek tıkla seslenir;
+/// isme tıklamak not yazılabilen detay ekranını açar.
 private struct UyeSatiri: View {
     let uye: Uye
-    let secildi: () -> Void
+    /// Kullanıcının gönderebileceği en yüksek seviye; düğmeler buna göre görünür.
+    let yetkim: Seviye
+    let hizliSeslen: (Seviye) -> Void
+    let detay: () -> Void
 
     @State private var uzerinde = false
 
     var body: some View {
-        Button(action: secildi) {
+        HStack(spacing: 6) {
             HStack(spacing: 10) {
                 ZStack(alignment: .bottomTrailing) {
                     Circle()
@@ -245,21 +294,40 @@ private struct UyeSatiri: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer()
-
-                Image(systemName: "megaphone.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(uzerinde ? Color.accentColor : Color.secondary.opacity(0.45))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background {
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(uzerinde ? Color.primary.opacity(0.07) : .clear)
+                Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
+            .onTapGesture {
+                guard uye.cevrimici else { return }
+                detay()
+            }
+
+            HStack(spacing: 2) {
+                ForEach(Seviye.allCases, id: \.self) { seviye in
+                    if yetkim.kapsar(seviye) {
+                        HizliDugme(
+                            simge: seviye.simge,
+                            renk: seviye.renk,
+                            ipucu: "\(seviye.baslik) seslen"
+                        ) {
+                            hizliSeslen(seviye)
+                        }
+                    }
+                }
+                HizliDugme(
+                    simge: "ellipsis",
+                    renk: .secondary,
+                    ipucu: "Not yazarak seslen",
+                    eylem: detay
+                )
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(uzerinde ? Color.primary.opacity(0.07) : .clear)
+        }
         .onHover { uzerinde = $0 }
         // Çevrimdışı kişiye seslenilemez; sunucu da bunu reddeder.
         .disabled(!uye.cevrimici)
@@ -280,6 +348,33 @@ private struct UyeSatiri: View {
         case .mesgul: "Meşgul"
         case .cevrimdisi: "Çevrimdışı"
         }
+    }
+}
+
+/// Üye satırındaki tek tıklık seslenme düğmesi.
+private struct HizliDugme: View {
+    let simge: String
+    let renk: Color
+    let ipucu: String
+    let eylem: () -> Void
+
+    @State private var uzerinde = false
+
+    var body: some View {
+        Button(action: eylem) {
+            Image(systemName: simge)
+                .font(.system(size: 11))
+                .foregroundStyle(renk)
+                .frame(width: 25, height: 25)
+                .background {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(renk.opacity(uzerinde ? 0.25 : 0.10))
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { uzerinde = $0 }
+        .help(ipucu)
     }
 }
 

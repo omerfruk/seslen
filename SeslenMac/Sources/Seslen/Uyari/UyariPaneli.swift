@@ -88,9 +88,7 @@ private struct PanelGorunumu: View {
 
     @State private var nabiz = false
 
-    private var anaRenk: Color {
-        seslenme.seviye == .acil ? .red : .orange
-    }
+    private var anaRenk: Color { seslenme.seviye.renk }
 
     var body: some View {
         VStack(spacing: 18) {

@@ -41,7 +41,7 @@ struct SeslenmeHazirla: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
 
-                TextField("örn. kahve içelim mi?", text: $not)
+                TextField("örn. namaz kılalım mı?", text: $not)
                     .textFieldStyle(.roundedBorder)
                     .focused($notOdakta)
                     .onSubmit(gonder)
@@ -112,13 +112,7 @@ private struct SeviyeSatiri: View {
     let yetkiVar: Bool
     let secildi: () -> Void
 
-    private var renk: Color {
-        switch seviye {
-        case .normal: .blue
-        case .onemli: .orange
-        case .acil: .red
-        }
-    }
+    private var renk: Color { seviye.renk }
 
     var body: some View {
         Button {

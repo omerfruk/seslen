@@ -40,6 +40,7 @@ final class UyariYoneticisi {
     private let ayarlar: Ayarlar
     private let panel = UyariPaneli()
     private let kenarFlasi = KenarFlasi()
+    private let balon = UyariBalonu()
 
     /// Panel meşgulken gelen seslenmeler sıraya alınır.
     private var kuyruk: [Seslenme] = []
@@ -71,6 +72,10 @@ final class UyariYoneticisi {
         }
         if bicim.panel {
             panelGoster(seslenme)
+        } else if bicim.ikon {
+            // Panel kapalıyken notu gösteren tek yer balon. Panel açıksa notu
+            // zaten o gösteriyor; ikisini birden çıkarmak tekrar olurdu.
+            balon.goster(seslenme)
         }
     }
 
@@ -111,6 +116,8 @@ final class UyariYoneticisi {
     func hepsiniTemizle() {
         okunmamis.removeAll()
         dikkatCekiyor = false
+        // Kullanıcı listeyi menüde gördü; balonların ekranda kalmasına gerek yok.
+        balon.kapat()
     }
 
     /// Ayar ekranından uyarıyı denemek için örnek bir seslenme üretir.
@@ -165,7 +172,9 @@ final class UyariYoneticisi {
         guard Bundle.main.bundleIdentifier != nil, bildirimIzni == .verildi else { return }
 
         let icerik = UNMutableNotificationContent()
-        icerik.title = "\(seslenme.gonderenAd) sana sesleniyor"
+        icerik.title = seslenme.yayin
+            ? "\(seslenme.gonderenAd) herkese haykırdı"
+            : "\(seslenme.gonderenAd) sana sesleniyor"
         icerik.body = seslenme.not.isEmpty ? seslenme.seviye.baslik : seslenme.not
         icerik.interruptionLevel = seslenme.seviye == .acil ? .critical : .timeSensitive
         // Sesi biz çalıyoruz; bildirimin kendi sesi çift ses olmasın.

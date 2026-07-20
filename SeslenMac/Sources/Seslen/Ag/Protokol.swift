@@ -6,6 +6,7 @@ import Foundation
 enum MesajTipi: String, Codable, Sendable {
     // İstemci → Sunucu
     case seslen
+    case haykir
     case yanitla
     case durumBildir = "durum_bildir"
     case uyeGuncelle = "uye_guncelle"
@@ -27,6 +28,11 @@ enum MesajTipi: String, Codable, Sendable {
 struct SeslenIstek: Encodable, Sendable {
     var aliciID: String
     var seviye: Seviye
+    var not: String
+}
+
+/// Seviye taşımaz: yayın her zaman normal seviyede gider.
+struct HaykirIstek: Encodable, Sendable {
     var not: String
 }
 
@@ -78,6 +84,24 @@ struct SeslenmeGeldiVeri: Decodable, Sendable {
     var seviye: Seviye
     var not: String
     var gonderildi: Int
+    /// Çağrı tek kişiye değil kurumdaki herkese gitti mi?
+    var yayin: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case cagriID, gonderenID, gonderenAd, seviye, not, gonderildi, yayin
+    }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        cagriID = try k.decode(String.self, forKey: .cagriID)
+        gonderenID = try k.decode(String.self, forKey: .gonderenID)
+        gonderenAd = try k.decode(String.self, forKey: .gonderenAd)
+        seviye = try k.decode(Seviye.self, forKey: .seviye)
+        not = try k.decode(String.self, forKey: .not)
+        gonderildi = try k.decode(Int.self, forKey: .gonderildi)
+        // Eski sunucu bu alanı hiç göndermez; alanın yokluğu "yayın değil" demektir.
+        yayin = try k.decodeIfPresent(Bool.self, forKey: .yayin) ?? false
+    }
 }
 
 struct YanitGeldiVeri: Decodable, Sendable {
