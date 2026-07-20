@@ -44,12 +44,20 @@ Ekran paneli, ses ve kenar flaşı **Rahatsız Etmeyin (Focus) kipinde bile
 
 ```bash
 brew tap omerfruk/seslen
+brew trust omerfruk/seslen
 brew install --cask seslen
 ```
 
-Uygulama Apple Developer sertifikasıyla imzalanmadığı için macOS ilk açılışta
-uyarabilir. O durumda: **Sistem Ayarları → Gizlilik ve Güvenlik → "Yine de Aç"**.
+> **`brew trust` neden gerekli?** Homebrew 6.0'dan itibaren resmi olmayan tüm
+> tap'ler için bir kereye mahsus onay isteniyor. Atlarsanız kurulum
+> `untrusted tap` hatası verir.
+
+Cask, kurulumdan sonra karantina bayrağını kendiliğinden temizler. Yine de
+macOS uyarırsa: **Sistem Ayarları → Gizlilik ve Güvenlik → "Yine de Aç"**.
 Uygulamanın **İzinler** sekmesinde bu sayfayı açan bir kısayol düğmesi vardır.
+
+Doğrudan indirmek isterseniz DMG dosyası
+[Releases](https://github.com/omerfruk/seslen/releases) sayfasındadır.
 
 ### Geliştiriciler için
 
