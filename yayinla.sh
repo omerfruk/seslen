@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Seslen'i canlıya çıkarır. Elle çalıştırılır — her push'ta değil.
 #
-#   ./yayinla.sh 0.1.2          → tam yayın (uygulama + sunucu)
-#   ./yayinla.sh 0.1.2 --uygulama → yalnızca macOS uygulaması
-#   ./yayinla.sh --sunucu        → yalnızca sunucu (sürüm gerekmez)
-#   ./yayinla.sh 0.1.2 --deneme  → hiçbir şey yayınlamaz, adımları gösterir
+# Sürüm numarası son git etiketinden okunup kendiliğinden artırılır.
+#
+#   ./yayinla.sh            → yama artır (0.1.2 → 0.1.3) ve yayınla
+#   ./yayinla.sh --yan      → yan sürüm artır (0.1.2 → 0.2.0)
+#   ./yayinla.sh --ana      → ana sürüm artır (0.1.2 → 1.0.0)
+#   ./yayinla.sh 0.4.0      → sürümü elle belirt
+#   ./yayinla.sh --deneme   → hiçbir şey yayınlamaz, ne yapacağını gösterir
+#   ./yayinla.sh --sunucu   → yalnızca sunucuyu günceller, sürüm üretmez
+#   ./yayinla.sh --uygulama → yalnızca macOS uygulamasını yayınlar
 #
 # Ortam değişkenleriyle geçersiz kılınabilir:
 #   SESLEN_SSH   (varsayılan deploy@204.168.229.111)
@@ -30,6 +35,7 @@ hata() { kirmizi "HATA: $*"; exit 1; }
 
 # --- Argümanları çöz ---
 SURUM=""
+ARTIS="yama"          # yama | yan | ana
 YALNIZ_UYGULAMA=0
 YALNIZ_SUNUCU=0
 DENEME=0
@@ -39,22 +45,68 @@ for arg in "$@"; do
     --uygulama) YALNIZ_UYGULAMA=1 ;;
     --sunucu)   YALNIZ_SUNUCU=1 ;;
     --deneme)   DENEME=1 ;;
+    --yama)     ARTIS="yama" ;;
+    --yan)      ARTIS="yan" ;;
+    --ana)      ARTIS="ana" ;;
     -h|--yardim|--help)
-      grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -16
+      grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -18
       exit 0 ;;
     -*) hata "bilinmeyen seçenek: $arg" ;;
     *)  SURUM="$arg" ;;
   esac
 done
 
-# Sunucu-only değilse sürüm zorunlu ve biçimi doğrulanır.
+# Etiket listesi güncel olmadan sonraki sürüm doğru hesaplanamaz.
+git fetch -q --tags origin 2>/dev/null || true
+
+# En son yayınlanan sürümü bulur. Etiketler sürüm sırasına göre sıralanır;
+# alfabetik sıralama v0.1.10'u v0.1.9'dan önce koyardı.
+son_surum() {
+  git tag -l 'v[0-9]*' --sort=-v:refname | head -1 | sed 's/^v//'
+}
+
+# Verilen sürümü, istenen bileşeni artırarak bir sonrakine taşır.
+sonraki_surum() {
+  local mevcut="$1" ana yan yama
+  IFS=. read -r ana yan yama <<< "$mevcut"
+  case "$ARTIS" in
+    ana) ana=$((ana + 1)); yan=0; yama=0 ;;
+    yan) yan=$((yan + 1)); yama=0 ;;
+    *)   yama=$((yama + 1)) ;;
+  esac
+  echo "$ana.$yan.$yama"
+}
+
+# Sunucu-only dışında bir sürüme ihtiyacımız var.
 if [[ $YALNIZ_SUNUCU -eq 0 ]]; then
-  [[ -n "$SURUM" ]] || hata "sürüm belirtin. Örnek: ./yayinla.sh 0.1.2"
-  [[ "$SURUM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || hata "sürüm 'X.Y.Z' biçiminde olmalı (gelen: $SURUM)"
+  if [[ -n "$SURUM" ]]; then
+    [[ "$SURUM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || hata "sürüm 'X.Y.Z' biçiminde olmalı (gelen: $SURUM)"
+    SURUM_KAYNAGI="elle belirtildi"
+  else
+    ONCEKI="$(son_surum)"
+    if [[ -z "$ONCEKI" ]]; then
+      # Hiç etiket yoksa ilk sürüm.
+      SURUM="0.1.0"
+      SURUM_KAYNAGI="ilk sürüm (etiket yok)"
+    else
+      SURUM="$(sonraki_surum "$ONCEKI")"
+      SURUM_KAYNAGI="v$ONCEKI → $ARTIS artırıldı"
+    fi
+  fi
 fi
 
 if [[ $DENEME -eq 1 ]]; then
   sari "DENEME KİPİ — hiçbir şey yayınlanmayacak"
+fi
+
+# Sürüm elle yazılmadığında ne yayınlanacağı komuttan anlaşılmaz;
+# ilk iş olarak açıkça yazdırıyoruz.
+if [[ $YALNIZ_SUNUCU -eq 0 ]]; then
+  printf "\n\033[1mYayınlanacak sürüm: \033[1;32mv%s\033[0m  \033[2m(%s)\033[0m\n" \
+    "$SURUM" "$SURUM_KAYNAGI"
+else
+  printf "\n\033[1mYalnızca sunucu güncellenecek\033[0m \033[2m(sürüm üretilmiyor)\033[0m\n"
 fi
 
 # --- Ön kontroller ---
