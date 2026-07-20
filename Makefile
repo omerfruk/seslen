@@ -1,4 +1,4 @@
-.PHONY: yardim test sunucu uygulama dmg calistir kur temizle
+.PHONY: yardim test sunucu uygulama dmg calistir kur temizle yayinla
 
 SUNUCU_DIZIN := seslen-sunucu
 SWIFT_DIZIN  := SeslenMac
@@ -14,6 +14,10 @@ yardim:
 	@echo "  make kur        Seslen.app'i /Applications'a kurar ve başlatır"
 	@echo "  make dmg        Dağıtım DMG'si üretir         → $(CIKIS)/Seslen-<surum>.dmg"
 	@echo "  make temizle    Üretilen dosyaları siler"
+	@echo ""
+	@echo "  ./yayinla.sh 0.1.3        Canlıya çıkar (sunucu + uygulama + brew)"
+	@echo "  ./yayinla.sh 0.1.3 --deneme  Ne yapacağını gösterir, yayınlamaz"
+	@echo "  ./yayinla.sh --sunucu     Yalnızca sunucuyu günceller"
 
 test:
 	cd $(SUNUCU_DIZIN) && go test -race -count=1 ./...
@@ -44,3 +48,9 @@ kur: uygulama
 temizle:
 	rm -rf $(CIKIS) $(SWIFT_DIZIN)/.build
 	cd $(SUNUCU_DIZIN) && go clean
+
+# Canlıya çıkar. Elle çalıştırılır, her push'ta değil.
+#   make yayinla SURUM=0.1.3
+yayinla:
+	@test -n "$(SURUM)" || { echo "Kullanım: make yayinla SURUM=0.1.3"; exit 1; }
+	./yayinla.sh $(SURUM)

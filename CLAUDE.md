@@ -101,3 +101,23 @@ DMG olarak GitHub Releases'e yüklenir, Homebrew Cask ile kurulur. Cask'taki
 
 Ad-hoc imza şart: Anahtar Zinciri erişimi ve açılışta başlatma (`SMAppService`)
 kararlı bir paket kimliği olmadan çalışmaz.
+
+## Yayınlama
+
+Canlıya çıkış **elle** yapılır, her push'ta değil:
+
+```bash
+./yayinla.sh 0.1.3            # sunucu + uygulama + brew tap
+./yayinla.sh 0.1.3 --deneme   # ne yapacağını gösterir, yayınlamaz
+./yayinla.sh --sunucu         # yalnızca sunucuyu günceller
+```
+
+Betik sırasıyla: ön kontroller (temiz dizin, origin/main eşleşmesi, etiket
+çakışması, sunucu erişimi) → testler → sunucuya kurulum + sağlık ve WebSocket
+doğrulaması → DMG → git etiketi → GitHub release → Homebrew tap güncellemesi.
+
+Herhangi bir adım hata verirse durur (`set -euo pipefail`).
+
+Sunucu: `deploy@204.168.229.111:/srv/seslen`, Traefik arkasında
+`https://seslen.cidaltime.com`. Farklı bir hedef için `SESLEN_SSH` ve
+`SESLEN_ALAN` ortam değişkenleri kullanılır.
