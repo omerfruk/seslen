@@ -1,0 +1,19 @@
+# Üretilen dosyalar
+cikti/
+.build/
+*.dmg
+*.icns
+*.iconset/
+
+# Veritabanı
+*.db
+*.db-wal
+*.db-shm
+
+# macOS
+.DS_Store
+
+# Xcode / SwiftPM
+*.xcodeproj/
+.swiftpm/
+Package.resolved

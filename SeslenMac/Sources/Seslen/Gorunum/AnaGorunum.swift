@@ -1,0 +1,311 @@
+import SwiftUI
+
+/// Menü çubuğuna tıklayınca açılan ana panel.
+struct AnaGorunum: View {
+    @Environment(Ayarlar.self) private var ayarlar
+    @Environment(SunucuIstemcisi.self) private var istemci
+    @Environment(UyariYoneticisi.self) private var uyari
+    @Environment(\.openWindow) private var pencereAc
+
+    /// Seslenme hazırlanan kişi. Nil ise kişi listesi görünür.
+    @State private var secilenUye: Uye?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !istemci.oturumAcik {
+                GirisGorunumu()
+            } else if let ben = istemci.ben, !ben.onayli {
+                OnayBekleniyorGorunumu()
+            } else if let uye = secilenUye {
+                SeslenmeHazirla(uye: uye) { secilenUye = nil }
+            } else {
+                kisiListesi
+            }
+        }
+        .frame(width: 340)
+        .onAppear {
+            uyari.hepsiniTemizle()
+            if istemci.oturumAcik, !istemci.baglanti.iyi {
+                istemci.baglan()
+            }
+        }
+        .task {
+            await uyari.izinDurumunuYenile()
+        }
+    }
+
+    // MARK: - Kişi listesi
+
+    private var kisiListesi: some View {
+        VStack(spacing: 0) {
+            baslik
+
+            if let ben = istemci.ben, ben.rol.yonetimYetkisi, !istemci.bekleyen.isEmpty {
+                onayBekleyenlerSeridi(sayi: istemci.bekleyen.count)
+            }
+
+            if let hata = istemci.sonHata {
+                hataSeridi(hata)
+            }
+
+            Divider()
+
+            if istemci.digerUyeler.isEmpty {
+                bosListe
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(istemci.digerUyeler) { uye in
+                            UyeSatiri(uye: uye) { secilenUye = uye }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                }
+                .frame(maxHeight: 320)
+            }
+
+            Divider()
+            durumSecici
+            Divider()
+            altSerit
+        }
+    }
+
+    private var baslik: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "megaphone.fill")
+                .foregroundStyle(.tint)
+            Text(istemci.kurum?.ad ?? "Seslen")
+                .font(.headline)
+                .lineLimit(1)
+
+            Spacer()
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(istemci.baglanti.iyi ? Color.green : Color.orange)
+                    .frame(width: 7, height: 7)
+                Text(istemci.baglanti.iyi ? "\(cevrimiciSayisi)/\(istemci.uyeler.count)" : istemci.baglanti.baslik)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    private var cevrimiciSayisi: Int {
+        istemci.uyeler.filter(\.cevrimici).count
+    }
+
+    private func onayBekleyenlerSeridi(sayi: Int) -> some View {
+        Button {
+            pencereAc(id: PencereKimligi.kurum)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "person.badge.clock.fill")
+                Text("\(sayi) kişi katılmak için onay bekliyor")
+                    .font(.caption)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.16))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func hataSeridi(_ mesaj: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "exclamationmark.circle.fill")
+            Text(mesaj).font(.caption).lineLimit(2)
+            Spacer()
+        }
+        .foregroundStyle(.red)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(Color.red.opacity(0.12))
+        .task(id: mesaj) {
+            // Hata mesajı birkaç saniye sonra kendiliğinden kaybolsun.
+            try? await Task.sleep(for: .seconds(5))
+            istemci.sonHata = nil
+        }
+    }
+
+    private var bosListe: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "person.2.slash")
+                .font(.system(size: 26))
+                .foregroundStyle(.secondary)
+            Text("Kurumda henüz başka kimse yok")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if istemci.ben?.rol.yonetimYetkisi == true {
+                Button("Kişi davet et") { pencereAc(id: PencereKimligi.kurum) }
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+    }
+
+    private var durumSecici: some View {
+        HStack(spacing: 8) {
+            Text("Durumum")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Picker("", selection: Binding(
+                get: { istemci.ben?.durum == .mesgul ? Durum.mesgul : Durum.musait },
+                set: { istemci.durumBildir($0) }
+            )) {
+                ForEach(Durum.secilebilir, id: \.self) { durum in
+                    Text(durum.baslik).tag(durum)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 110)
+            .disabled(!istemci.baglanti.iyi)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private var altSerit: some View {
+        HStack(spacing: 4) {
+            Button {
+                pencereAc(id: PencereKimligi.ayarlar)
+            } label: {
+                Label("Ayarlar", systemImage: "gearshape")
+            }
+
+            if istemci.ben?.rol.yonetimYetkisi == true {
+                Button {
+                    pencereAc(id: PencereKimligi.kurum)
+                } label: {
+                    Label("Kurum", systemImage: "person.3")
+                }
+            }
+
+            Spacer()
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Label("Çıkış", systemImage: "power")
+            }
+        }
+        .buttonStyle(.accessoryBar)
+        .labelStyle(.titleAndIcon)
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Üye satırı
+
+/// Kişi listesindeki tek bir satır.
+private struct UyeSatiri: View {
+    let uye: Uye
+    let secildi: () -> Void
+
+    @State private var uzerinde = false
+
+    var body: some View {
+        Button(action: secildi) {
+            HStack(spacing: 10) {
+                ZStack(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.18))
+                        .frame(width: 30, height: 30)
+                        .overlay {
+                            Text(uye.basHarfler)
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                    Circle()
+                        .fill(durumRengi)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(uye.adSoyad)
+                        .font(.system(size: 13))
+                        .lineLimit(1)
+                    Text(durumMetni)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "megaphone.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(uzerinde ? Color.accentColor : Color.secondary.opacity(0.45))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(uzerinde ? Color.primary.opacity(0.07) : .clear)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { uzerinde = $0 }
+        // Çevrimdışı kişiye seslenilemez; sunucu da bunu reddeder.
+        .disabled(!uye.cevrimici)
+        .opacity(uye.cevrimici ? 1 : 0.5)
+    }
+
+    private var durumRengi: Color {
+        switch uye.etkinDurum {
+        case .musait: .green
+        case .mesgul: .orange
+        case .cevrimdisi: .gray
+        }
+    }
+
+    private var durumMetni: String {
+        switch uye.etkinDurum {
+        case .musait: uye.rol == .uye ? "Müsait" : "Müsait · \(uye.rol.baslik)"
+        case .mesgul: "Meşgul"
+        case .cevrimdisi: "Çevrimdışı"
+        }
+    }
+}
+
+// MARK: - Onay bekleniyor
+
+/// Katılım isteği henüz onaylanmamış kullanıcıya gösterilen ekran.
+private struct OnayBekleniyorGorunumu: View {
+    @Environment(SunucuIstemcisi.self) private var istemci
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 32))
+                .foregroundStyle(.orange)
+            Text("Onay bekleniyor")
+                .font(.headline)
+            Text("**\(istemci.kurum?.ad ?? "Kurum")** yöneticisi katılım isteğinizi onayladığında ekip listesi burada görünecek.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Vazgeç ve çık", role: .destructive) {
+                istemci.cikisYap()
+            }
+            .buttonStyle(.link)
+            .font(.callout)
+            .padding(.top, 4)
+        }
+        .padding(22)
+    }
+}

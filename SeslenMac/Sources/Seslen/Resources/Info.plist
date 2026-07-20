@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Seslen</string>
+	<key>CFBundleDisplayName</key>
+	<string>Seslen</string>
+	<key>CFBundleExecutable</key>
+	<string>Seslen</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.omerfruk.seslen</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>SURUM_YER_TUTUCU</string>
+	<key>CFBundleVersion</key>
+	<string>SURUM_YER_TUTUCU</string>
+	<key>CFBundleIconFile</key>
+	<string>Seslen</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+
+	<!-- Dock'ta ikon göstermez; Seslen yalnızca menü çubuğunda yaşar. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>Seslen</string>
+
+	<!-- Yerel ağdaki sunucuya (ör. http://192.168.1.20:8787) bağlanabilmek için
+	     düz HTTP'ye izin veriyoruz. Uzak sunucuda https kullanılmalıdır. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+
+	<!-- macOS 15+ yerel ağ taraması/erişimi için gerekçe ister. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Seslen, ekibinizin kurduğu yerel ağdaki sunucuya bağlanarak seslenmeleri iletir.</string>
+</dict>
+</plist>
