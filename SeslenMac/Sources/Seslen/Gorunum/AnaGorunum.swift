@@ -21,6 +21,11 @@ struct AnaGorunum: View {
             } else {
                 kisiListesi
             }
+
+            // Alt şerit her durumda görünür: oturum açılmamışken de kullanıcının
+            // ayarlara ulaşabilmesi ve uygulamadan çıkabilmesi gerekir.
+            Divider()
+            altSerit
         }
         .frame(width: 340)
         .onAppear {
@@ -67,8 +72,6 @@ struct AnaGorunum: View {
 
             Divider()
             durumSecici
-            Divider()
-            altSerit
         }
     }
 
