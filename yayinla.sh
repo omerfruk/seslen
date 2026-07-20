@@ -166,17 +166,39 @@ if [[ $YALNIZ_UYGULAMA -eq 0 ]]; then
       SESLEN_ALAN='$ALAN' docker compose -f docker-compose.sunucu.yml up -d --build
     " 2>&1 | grep -E "Container|Image|Network|Volume|error|Error" | sed 's/^/    /' || true
 
-    printf "    sağlık bekleniyor"
+    # 1) Kabın kendi sağlık durumu. Bu, yeni kap hakkında kesin bilgi verir;
+    #    dışarıdan bakmak eski kaba denk gelebilir.
+    printf "    kap sağlığı bekleniyor"
+    KAP_HAZIR=0
     for _ in $(seq 1 40); do
-      if curl -fsS --max-time 5 "https://$ALAN/saglik" >/dev/null 2>&1; then
-        printf "\n"; yesil "  sunucu ayakta: https://$ALAN"
-        break
-      fi
+      DURUM="$(ssh -o BatchMode=yes "$SSH_HEDEF" \
+        'docker inspect --format="{{.State.Health.Status}}" seslen 2>/dev/null' 2>/dev/null || echo "")"
+      if [[ "$DURUM" == "healthy" ]]; then KAP_HAZIR=1; break; fi
       printf "."
       sleep 3
     done
-    curl -fsS --max-time 5 "https://$ALAN/saglik" >/dev/null 2>&1 \
-      || { printf "\n"; hata "sunucu sağlık kontrolünden geçmedi"; }
+    printf "\n"
+    [[ $KAP_HAZIR -eq 1 ]] || hata "kap sağlıklı duruma geçmedi (son durum: ${DURUM:-bilinmiyor})"
+    yesil "  kap sağlıklı"
+
+    # 2) Dışarıdan erişim. Traefik yeni kaba geçerken kısa bir kesinti olabilir,
+    #    bu yüzden tek bir başarı yeterli sayılmaz; art arda üç kez istiyoruz.
+    printf "    dışarıdan erişim sınanıyor"
+    ARDISIK=0
+    DISARI_HAZIR=0
+    for _ in $(seq 1 40); do
+      if curl -fsS --max-time 5 "https://$ALAN/saglik" >/dev/null 2>&1; then
+        ARDISIK=$((ARDISIK + 1))
+        if [[ $ARDISIK -ge 3 ]]; then DISARI_HAZIR=1; break; fi
+      else
+        ARDISIK=0
+      fi
+      printf "."
+      sleep 2
+    done
+    printf "\n"
+    [[ $DISARI_HAZIR -eq 1 ]] || hata "sunucu dışarıdan kararlı yanıt vermedi: https://$ALAN/saglik"
+    yesil "  sunucu ayakta: https://$ALAN"
 
     # WebSocket yükseltmesi ters vekilde en sık kırılan yerdir; ayrıca sınıyoruz.
     KOD="$(curl -s -o /dev/null -w '%{http_code}' --http1.1 --max-time 8 \
