@@ -164,9 +164,7 @@ if [[ $YALNIZ_SUNUCU -eq 0 ]]; then
       --notes "## Kurulum
 
 \`\`\`bash
-brew tap omerfruk/seslen
-brew trust omerfruk/seslen
-brew install --cask seslen
+brew install --cask omerfruk/seslen/seslen
 \`\`\`
 
 Zaten kuruluysa: \`brew upgrade --cask seslen\`

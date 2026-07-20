@@ -43,14 +43,16 @@ Ekran paneli, ses ve kenar flaşı **Rahatsız Etmeyin (Focus) kipinde bile
 ### Kullanıcılar için
 
 ```bash
-brew tap omerfruk/seslen
-brew trust omerfruk/seslen
-brew install --cask seslen
+brew install --cask omerfruk/seslen/seslen
 ```
 
-> **`brew trust` neden gerekli?** Homebrew 6.0'dan itibaren resmi olmayan tüm
-> tap'ler için bir kereye mahsus onay isteniyor. Atlarsanız kurulum
-> `untrusted tap` hatası verir.
+Güncelleme: `brew upgrade --cask seslen`
+
+> **Neden tap adı da yazılıyor?** Seslen resmi `homebrew/cask` deposunda değil.
+> Homebrew 6.0'dan itibaren resmi olmayan tap'lerdeki kod yalnızca açık onayla
+> yükleniyor; kaynağı `kullanici/tap/cask` biçiminde tam yazmak bu onayın
+> yerine geçiyor ve tap'i de kendiliğinden ekliyor. Kısa ad (`--cask seslen`)
+> kullanılırsa önce `brew tap`, sonra `brew trust` gerekir.
 
 Cask, kurulumdan sonra karantina bayrağını kendiliğinden temizler. Yine de
 macOS uyarırsa: **Sistem Ayarları → Gizlilik ve Güvenlik → "Yine de Aç"**.
