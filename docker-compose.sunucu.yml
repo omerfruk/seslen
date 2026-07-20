@@ -1,0 +1,62 @@
+# Seslen — üretim kurulumu (Traefik ters vekilin arkasında).
+#
+# Yerel deneme için docker-compose.yml kullanın; bu dosya sunucuya özeldir.
+#
+# Kurulum:
+#   git clone https://github.com/omerfruk/seslen.git /srv/seslen
+#   cd /srv/seslen
+#   docker compose -f docker-compose.sunucu.yml up -d --build
+#
+# Alan adı SESLEN_ALAN ile değiştirilebilir:
+#   SESLEN_ALAN=seslen.ornek.com docker compose -f docker-compose.sunucu.yml up -d
+
+services:
+  seslen:
+    build:
+      context: ./seslen-sunucu
+    image: seslen-sunucu:latest
+    container_name: seslen
+    restart: unless-stopped
+
+    environment:
+      SESLEN_ADRES: ":8787"
+      SESLEN_VT: "/veri/seslen.db"
+      TZ: "Europe/Istanbul"
+
+    volumes:
+      - seslen-veri:/veri
+
+    # Port dışarı açılmaz; tek giriş noktası Traefik'tir.
+    networks:
+      - proxy
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.seslen.rule=Host(`${SESLEN_ALAN:-seslen.cidaltime.com}`)"
+      - "traefik.http.routers.seslen.entrypoints=websecure"
+      - "traefik.http.routers.seslen.tls=true"
+      - "traefik.http.routers.seslen.tls.certresolver=letsencrypt"
+      - "traefik.http.services.seslen.loadbalancer.server.port=8787"
+      # WebSocket bağlantıları uzun ömürlüdür; Traefik'in varsayılan
+      # zaman aşımları yeterli olsa da bağlantının koptuğunda hızlıca
+      # yeniden kurulması için sağlık kontrolü tanımlıyoruz.
+      - "traefik.http.services.seslen.loadbalancer.healthcheck.path=/saglik"
+      - "traefik.http.services.seslen.loadbalancer.healthcheck.interval=30s"
+      # Watchtower bu imajı bir kayıt defterinden çekmiyor (yerelde derleniyor),
+      # boşuna denemesin.
+      - "com.centurylinklabs.watchtower.enable=false"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  seslen-veri:
+
+networks:
+  # Traefik'in bulunduğu, sunucuda zaten var olan ağ.
+  proxy:
+    external: true

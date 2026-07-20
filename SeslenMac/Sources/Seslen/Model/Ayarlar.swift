@@ -22,9 +22,12 @@ struct UyariBicimi: Codable, Sendable, Equatable {
 /// Kullanıcının bu cihazdaki tercihleri. Sunucuda değil, yerelde saklanır.
 @Observable
 final class Ayarlar {
-    /// Sunucu adresi. Yerel testte `http://localhost:8787`, ofis ağında
-    /// `http://192.168.1.20:8787`, canlıda `https://seslen.ornek.com` olabilir.
-    var sunucuAdresi: String = "http://localhost:8787" { didSet { kaydet() } }
+    /// Ekibin sunucusu. Uygulamaya gömülüdür: kullanıcılar brew ile kurup
+    /// hiçbir ayar yapmadan bağlanabilsin diye giriş ekranında sorulmaz.
+    /// Geliştirme sırasında Ayarlar → Genel → Gelişmiş altından değiştirilebilir.
+    static let varsayilanSunucu = "https://seslen.cidaltime.com"
+
+    var sunucuAdresi: String = Ayarlar.varsayilanSunucu { didSet { kaydet() } }
 
     /// Kişiye özel ayarı olmayan herkes için geçerli varsayılan.
     var varsayilan: UyariBicimi = UyariBicimi() { didSet { kaydet() } }
@@ -108,16 +111,22 @@ final class Ayarlar {
         var sesSiddeti: Double
         var acilistaBaslat: Bool
         var panelSuresi: Double
+        /// Kayıt biçiminin sürümü; geçiş işlemleri için.
+        var surum: Int?
     }
 
     private static let anahtar = "seslen.ayarlar"
+
+    /// Güncel kayıt sürümü. Artırılınca `yukle` içindeki geçiş kuralı işler.
+    private static let guncelSurum = 2
 
     private func kaydet() {
         guard !yukleniyor else { return }
         let kayit = Kayit(
             sunucuAdresi: sunucuAdresi, varsayilan: varsayilan, kisisel: kisisel,
             acilEzsin: acilEzsin, sesSiddeti: sesSiddeti,
-            acilistaBaslat: acilistaBaslat, panelSuresi: panelSuresi
+            acilistaBaslat: acilistaBaslat, panelSuresi: panelSuresi,
+            surum: Self.guncelSurum
         )
         if let veri = try? JSONEncoder().encode(kayit) {
             UserDefaults.standard.set(veri, forKey: Self.anahtar)
@@ -130,7 +139,14 @@ final class Ayarlar {
         else { return }
 
         yukleniyor = true
-        sunucuAdresi = kayit.sunucuAdresi
+        // Sürüm 1'de sunucu adresi kullanıcıya soruluyordu ve varsayılanı
+        // localhost'tu. Artık gömülü olduğu için o kayıtları güncel adrese
+        // taşıyoruz; aksi halde eski kurulumlar localhost'a bağlanmaya çalışır.
+        if (kayit.surum ?? 1) < 2 {
+            sunucuAdresi = Self.varsayilanSunucu
+        } else {
+            sunucuAdresi = kayit.sunucuAdresi
+        }
         varsayilan = kayit.varsayilan
         kisisel = kayit.kisisel
         acilEzsin = kayit.acilEzsin
@@ -138,5 +154,8 @@ final class Ayarlar {
         acilistaBaslat = kayit.acilistaBaslat
         panelSuresi = kayit.panelSuresi
         yukleniyor = false
+
+        // Geçiş uygulandıysa yeni sürümle birlikte diske yaz.
+        if (kayit.surum ?? 1) < Self.guncelSurum { kaydet() }
     }
 }

@@ -2,7 +2,6 @@ import SwiftUI
 
 /// İlk açılışta görünen ekran: ya yeni kurum kurulur ya da koda katılınır.
 struct GirisGorunumu: View {
-    @Environment(Ayarlar.self) private var ayarlar
     @Environment(SunucuIstemcisi.self) private var istemci
 
     private enum Kip: String, CaseIterable {
@@ -18,8 +17,6 @@ struct GirisGorunumu: View {
     @State private var hata: String?
 
     var body: some View {
-        @Bindable var ayarlar = ayarlar
-
         VStack(spacing: 14) {
             VStack(spacing: 4) {
                 Image(systemName: "megaphone.fill")
@@ -49,20 +46,6 @@ struct GirisGorunumu: View {
                 case .olustur:
                     TextField("Kurum adı", text: $kurumAd)
                 }
-
-                DisclosureGroup("Sunucu adresi") {
-                    TextField("http://localhost:8787", text: $ayarlar.sunucuAdresi)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                        .padding(.top, 4)
-                    Text("Yerel testte `http://localhost:8787`, ofis ağında sunucunun IP adresi.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .font(.caption)
-                .padding(.top, 2)
             }
             .textFieldStyle(.roundedBorder)
 

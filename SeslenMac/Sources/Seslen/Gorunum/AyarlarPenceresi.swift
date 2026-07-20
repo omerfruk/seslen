@@ -29,10 +29,7 @@ private struct GenelSekmesi: View {
         @Bindable var ayarlar = ayarlar
 
         Form {
-            Section("Sunucu") {
-                TextField("Adres", text: $ayarlar.sunucuAdresi)
-                    .font(.system(size: 12, design: .monospaced))
-
+            Section("Bağlantı") {
                 HStack {
                     Circle()
                         .fill(istemci.baglanti.iyi ? Color.green : Color.orange)
@@ -43,15 +40,6 @@ private struct GenelSekmesi: View {
                     Spacer()
                     Button("Yeniden bağlan") { istemci.yenidenBaglan() }
                 }
-
-                Text("""
-                Yerel deneme: `http://localhost:8787`
-                Ofis ağı: `http://192.168.1.20:8787` (sunucunun IP adresi)
-                Uzak sunucu: `https://seslen.ornek.com`
-                """)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Uygulama") {
@@ -78,6 +66,36 @@ private struct GenelSekmesi: View {
                     Button("Oturumu kapat", role: .destructive) {
                         istemci.cikisYap()
                     }
+                }
+            }
+
+            // Sunucu adresi normalde gizli: uygulamaya gömülüdür ve
+            // kullanıcıların onunla uğraşmasına gerek yoktur. Geliştirme ya da
+            // sunucu taşıma durumları için buradan erişilebilir kalıyor.
+            Section {
+                DisclosureGroup("Gelişmiş") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Sunucu adresi")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("", text: $ayarlar.sunucuAdresi)
+                            .font(.system(size: 12, design: .monospaced))
+                            .textFieldStyle(.roundedBorder)
+                        HStack {
+                            Button("Varsayılana dön") {
+                                ayarlar.sunucuAdresi = Ayarlar.varsayilanSunucu
+                                istemci.yenidenBaglan()
+                            }
+                            .disabled(ayarlar.sunucuAdresi == Ayarlar.varsayilanSunucu)
+                            Spacer()
+                            Button("Bağlan") { istemci.yenidenBaglan() }
+                        }
+                        .controlSize(.small)
+                        Text("Bu adresi yalnızca ekibin sunucusu taşındıysa değiştirin.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
                 }
             }
         }
