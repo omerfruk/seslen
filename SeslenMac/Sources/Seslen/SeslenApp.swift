@@ -21,6 +21,14 @@ struct SeslenApp: App {
         uyari.yanitVerildi = { [weak istemci] cagriID, yanit in
             istemci?.yanitla(cagriID: cagriID, yanit: yanit)
         }
+        // Karşı taraf yanıtladığında gönderenin bunu görmesi gerekir; bu bağ
+        // kurulmazsa sunucudan gelen yanıt sessizce yere düşer.
+        istemci.yanitGeldi = { [weak uyari] veri in
+            uyari?.yanitiGoster(veri)
+        }
+        istemci.kacirilanlarGeldi = { [weak uyari] seslenmeler in
+            uyari?.kacirilanlariIsle(seslenmeler)
+        }
 
         _ayarlar = State(initialValue: ayarlar)
         _istemci = State(initialValue: istemci)

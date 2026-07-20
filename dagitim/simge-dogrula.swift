@@ -19,6 +19,60 @@ let desen = try! NSRegularExpression(
     pattern: #"system(?:Name|Image|SymbolName):\s*"([^"]+)""#
 )
 
+/// `simge` özelliklerinin gövdesindeki çıplak dizgileri yakalar.
+///
+/// `Seviye.simge` gibi hesaplanan özellikler adı `switch` içinde döndürür ve
+/// çağrı yerine değişken olarak geçer (`Image(systemName: seviye.simge)`).
+/// Yalnızca birinci desene bakılsaydı bu adların hiçbiri denetlenmezdi —
+/// oysa menü çubuğunu görünmez yapan hata tam olarak buradan gelmişti.
+let dizgiDeseni = try! NSRegularExpression(pattern: #""([^"]+)""#)
+
+/// Satırın gövdesi olan bir `simge` özelliğini açıp açmadığını söyler.
+///
+/// Süslü parantez şartı önemlidir: `BalonOgesi.simge` gibi saklanan özellikler
+/// de "var simge: String" biçimindedir ama gövdeleri yoktur. Onları blok
+/// başlangıcı saymak, taramayı dosyanın geri kalanına taşırıp alakasız
+/// dizgileri simge sanmaya yol açar.
+func simgeOzelligiMi(_ satir: String) -> Bool {
+    let kirpik = satir.trimmingCharacters(in: .whitespaces)
+    guard kirpik.contains("simge"), kirpik.contains("String"), kirpik.contains("{") else {
+        return false
+    }
+    return kirpik.hasPrefix("var ") || kirpik.hasPrefix("func ")
+        || kirpik.hasPrefix("private var ") || kirpik.hasPrefix("private func ")
+        || kirpik.hasPrefix("static var ") || kirpik.hasPrefix("static func ")
+}
+
+/// Bir `simge` özelliğinin gövdesindeki tüm dizgileri toplar.
+func simgeAdlariniTopla(_ icerik: String) -> Set<String> {
+    var bulunanlar = Set<String>()
+    var derinlik = 0
+    var icerideyiz = false
+
+    for satir in icerik.split(separator: "\n", omittingEmptySubsequences: false) {
+        let metin = String(satir)
+
+        if !icerideyiz, simgeOzelligiMi(metin) {
+            icerideyiz = true
+            derinlik = 0
+        }
+        guard icerideyiz else { continue }
+
+        let aralik = NSRange(metin.startIndex..., in: metin)
+        for eslesme in dizgiDeseni.matches(in: metin, range: aralik) {
+            if let r = Range(eslesme.range(at: 1), in: metin) {
+                bulunanlar.insert(String(metin[r]))
+            }
+        }
+
+        derinlik += metin.filter { $0 == "{" }.count
+        derinlik -= metin.filter { $0 == "}" }.count
+        // Açılış satırındaki süslü parantez kapandığında özellik bitmiştir.
+        if derinlik <= 0, metin.contains("}") { icerideyiz = false }
+    }
+    return bulunanlar
+}
+
 var adlar = Set<String>()
 
 guard let gezgin = FileManager.default.enumerator(at: kok, includingPropertiesForKeys: nil) else {
@@ -36,6 +90,7 @@ for durum in gezgin {
             adlar.insert(String(icerik[r]))
         }
     }
+    adlar.formUnion(simgeAdlariniTopla(icerik))
 }
 
 var eksikler: [String] = []

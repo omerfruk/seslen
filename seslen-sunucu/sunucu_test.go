@@ -113,6 +113,302 @@ func (c *istemci) bekle(tip protokol.Tip, sure time.Duration) protokol.Zarf {
 	}
 }
 
+// beklemeyen, sinir tipindeki mesaja kadar okur ve arada istenmeyen tipte bir
+// mesaj görürse testi düşürür. Bir şeyin gönderilMEdiğini doğrulamak içindir:
+// tek bir bağlantıda mesaj sırası korunduğu için, sınır mesajı geldiğinde
+// öncesindeki her şey okunmuş olur.
+func (c *istemci) beklemeyen(istenmeyen, sinir protokol.Tip, sure time.Duration) {
+	c.t.Helper()
+	bitis := time.Now().Add(sure)
+	for {
+		if time.Now().After(bitis) {
+			c.t.Fatalf("%q mesajı %v içinde gelmedi", sinir, sure)
+		}
+		c.ws.SetReadDeadline(bitis)
+		_, ham, err := c.ws.ReadMessage()
+		if err != nil {
+			c.t.Fatalf("%q beklenirken okuma hatası: %v", sinir, err)
+		}
+		var zarf protokol.Zarf
+		if err := json.Unmarshal(ham, &zarf); err != nil {
+			c.t.Fatalf("çözümlenemedi: %v", err)
+		}
+		if zarf.Tip == istenmeyen {
+			c.t.Fatalf("%q mesajı gönderilmemeliydi", istenmeyen)
+		}
+		if zarf.Tip == sinir {
+			return
+		}
+	}
+}
+
+// TestCevrimdisiTeslimKuyrugu, üye çevrimdışıyken gelen seslenmenin kaybolmayıp
+// üye bağlanır bağlanmaz iletildiğini ve ikinci kez iletilmediğini doğrular.
+func TestCevrimdisiTeslimKuyrugu(t *testing.T) {
+	o := ortamKur(t)
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer",
+	})
+	omerToken := yanit["token"].(string)
+	omerID := yanit["ben"].(map[string]any)["id"].(string)
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Ali Veli",
+	})
+	aliToken := yanit["token"].(string)
+	aliID := yanit["ben"].(map[string]any)["id"].(string)
+
+	omer := o.baglan(omerToken, omerID)
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	ali := o.baglan(aliToken, aliID)
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: aliID})
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Ali bilgisayarını kapatır. Kopuşun sunucuya işlendiğini kuruma giden tam
+	// durum yayınından anlıyoruz; sabit süre beklemekten güvenli.
+	ali.ws.Close()
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Ömer yokken seslenir: seslenme kaybolmadığı için hata değil bilgi dönmeli.
+	omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: aliID, Seviye: model.SeviyeOnemli, Not: "müşteri bekliyor",
+	})
+	bilgiZarf := omer.bekle(protokol.TipBilgi, 2*time.Second)
+	var bilgi protokol.BilgiVeri
+	json.Unmarshal(bilgiZarf.Veri, &bilgi)
+	if !strings.Contains(bilgi.Mesaj, "çevrimdışı") {
+		t.Errorf("çevrimdışı bilgisi beklenirdi, gelen: %q", bilgi.Mesaj)
+	}
+
+	// Ali döndüğünde kaçırdığı çağrı bağlanır bağlanmaz gelmeli.
+	ali2 := o.baglan(aliToken, aliID)
+	kacZarf := ali2.bekle(protokol.TipKacirilanlar, 2*time.Second)
+	var kacirilanlar protokol.KacirilanlarVeri
+	json.Unmarshal(kacZarf.Veri, &kacirilanlar)
+	if len(kacirilanlar.Cagrilar) != 1 {
+		t.Fatalf("bir kaçırılmış çağrı beklenirdi, gelen: %d", len(kacirilanlar.Cagrilar))
+	}
+	if k := kacirilanlar.Cagrilar[0]; k.Not != "müşteri bekliyor" || k.GonderenAd != "Ömer" {
+		t.Errorf("kaçırılan çağrı içeriği hatalı: %+v", k)
+	}
+
+	// Teslim edilmiş çağrı ikinci bağlantıda yeniden gönderilmemeli; yoksa
+	// kullanıcı her açılışta aynı seslenmeleri görür.
+	ali2.ws.Close()
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	ali3 := o.baglan(aliToken, aliID)
+	ali3.yolla(protokol.TipNabiz, nil)
+	ali3.beklemeyen(protokol.TipKacirilanlar, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestYayinKuyrugaGirmez, haykırışın çevrimdışı üye için biriktirilmediğini
+// doğrular: saatler sonra teslim edilen bir yayın bilgi değil gürültüdür.
+func TestYayinKuyrugaGirmez(t *testing.T) {
+	o := ortamKur(t)
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer",
+	})
+	omerToken := yanit["token"].(string)
+	omerID := yanit["ben"].(map[string]any)["id"].(string)
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Ali Veli",
+	})
+	aliToken := yanit["token"].(string)
+	aliID := yanit["ben"].(map[string]any)["id"].(string)
+
+	omer := o.baglan(omerToken, omerID)
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	ali := o.baglan(aliToken, aliID)
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: aliID})
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	ali.ws.Close()
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	omer.yolla(protokol.TipHaykir, protokol.HaykirIstek{Not: "toplantı başlıyor"})
+
+	ali2 := o.baglan(aliToken, aliID)
+	ali2.yolla(protokol.TipNabiz, nil)
+	ali2.beklemeyen(protokol.TipKacirilanlar, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestKurucuTacizGecisi, taciz seviyesi eklenmeden önce kurulmuş kurumların
+// kurucularının açılışta bu yetkiye kavuştuğunu doğrular.
+//
+// Kurucu kendi seviyesini arayüzden değiştiremediği (yönetim işlemleri kurucuya
+// dokunamaz) için, geçiş çalışmazsa taciz düğmesi o hesaplarda kalıcı olarak
+// görünmez kalır.
+func TestKurucuTacizGecisi(t *testing.T) {
+	yol := filepath.Join(t.TempDir(), "gecis.db")
+
+	depo, err := store.Ac(yol)
+	if err != nil {
+		t.Fatalf("veritabanı açılamadı: %v", err)
+	}
+	_, kurucu, _, err := depo.KurumOlustur("HAY Teknoloji", "Ömer")
+	if err != nil {
+		t.Fatalf("kurum oluşturulamadı: %v", err)
+	}
+	// Taciz seviyesi eklenmeden önceki hali taklit ediyoruz.
+	if err := depo.UyeGuncelle(kurucu.ID, model.RolKurucu, model.SeviyeAcil); err != nil {
+		t.Fatalf("üye güncellenemedi: %v", err)
+	}
+	depo.Kapat()
+
+	// Sunucunun yeniden başlaması geçişi uygulamalı.
+	yeni, err := store.Ac(yol)
+	if err != nil {
+		t.Fatalf("veritabanı yeniden açılamadı: %v", err)
+	}
+	defer yeni.Kapat()
+
+	guncel, err := yeni.UyeGetir(kurucu.ID)
+	if err != nil {
+		t.Fatalf("üye okunamadı: %v", err)
+	}
+	if guncel.MaxSeviye != model.SeviyeTaciz {
+		t.Errorf("kurucunun seviyesi tacize yükselmeliydi, gelen: %q", guncel.MaxSeviye)
+	}
+
+	// Sıradan üyeler geçişten etkilenmemeli; taciz yetkisi kurucunun dağıtacağı
+	// bir şey, herkese kendiliğinden verilen bir şey değil.
+	_, uye, _, err := yeni.KurumaKatil(kurucuKodu(t, yeni, kurucu.KurumID), "Ali Veli")
+	if err != nil {
+		t.Fatalf("kuruma katılınamadı: %v", err)
+	}
+	if uye.MaxSeviye != model.SeviyeNormal {
+		t.Errorf("yeni üyenin seviyesi normal kalmalıydı, gelen: %q", uye.MaxSeviye)
+	}
+}
+
+// kurucuKodu, kurumun güncel katılım kodunu okur.
+func kurucuKodu(t *testing.T, depo *store.Store, kurumID string) string {
+	t.Helper()
+	kurum, err := depo.KurumGetir(kurumID)
+	if err != nil {
+		t.Fatalf("kurum okunamadı: %v", err)
+	}
+	return kurum.KatilimKodu
+}
+
+// TestTacizYukseltmesi, yanıtsız kalan ACİL çağrıların eşiğe ulaşınca
+// kendiliğinden taciz seviyesine çıktığını ve yanıt verilince sıfırlandığını
+// doğrular.
+func TestTacizYukseltmesi(t *testing.T) {
+	o := ortamKur(t)
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer",
+	})
+	omerToken := yanit["token"].(string)
+	omerID := yanit["ben"].(map[string]any)["id"].(string)
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Ali Veli",
+	})
+	aliToken := yanit["token"].(string)
+	aliID := yanit["ben"].(map[string]any)["id"].(string)
+
+	omer := o.baglan(omerToken, omerID)
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	ali := o.baglan(aliToken, aliID)
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: aliID})
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Ali hiçbirini yanıtlamıyor: üçüncü çağrı tacize yükselmeli.
+	beklenen := []model.Seviye{model.SeviyeAcil, model.SeviyeAcil, model.SeviyeTaciz}
+	var sonCagriIDleri []string
+	for sira, seviye := range beklenen {
+		omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+			AliciID: aliID, Seviye: model.SeviyeAcil, Not: "neredesin",
+		})
+		zarf := ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+		var gelen protokol.SeslenmeGeldiVeri
+		json.Unmarshal(zarf.Veri, &gelen)
+		if gelen.Seviye != seviye {
+			t.Errorf("%d. çağrının seviyesi %q olmalıydı, gelen: %q", sira+1, seviye, gelen.Seviye)
+		}
+		sonCagriIDleri = append(sonCagriIDleri, gelen.CagriID)
+	}
+
+	// Ali hepsini yanıtlayınca sayaç sıfırlanır; sonraki ACİL yine ACİL olmalı.
+	for _, cagriID := range sonCagriIDleri {
+		ali.yolla(protokol.TipYanitla, protokol.YanitlaIstek{
+			CagriID: cagriID, Yanit: model.YanitGeliyorum,
+		})
+		omer.bekle(protokol.TipYanitGeldi, 2*time.Second)
+	}
+
+	omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: aliID, Seviye: model.SeviyeAcil, Not: "tekrar",
+	})
+	zarf := ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+	var gelen protokol.SeslenmeGeldiVeri
+	json.Unmarshal(zarf.Veri, &gelen)
+	if gelen.Seviye != model.SeviyeAcil {
+		t.Errorf("yanıtlardan sonra seviye ACİL'e dönmeliydi, gelen: %q", gelen.Seviye)
+	}
+}
+
+// TestTacizYetkisi, taciz seviyesinin elle gönderiminin yetkiye bağlı olduğunu
+// doğrular: yükseltme hak edilerek gelir, düğme ise yetkiyle.
+func TestTacizYetkisi(t *testing.T) {
+	o := ortamKur(t)
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer",
+	})
+	omerToken := yanit["token"].(string)
+	omerID := yanit["ben"].(map[string]any)["id"].(string)
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Ali Veli",
+	})
+	aliToken := yanit["token"].(string)
+	aliID := yanit["ben"].(map[string]any)["id"].(string)
+
+	omer := o.baglan(omerToken, omerID)
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	ali := o.baglan(aliToken, aliID)
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: aliID})
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Ali'nin yetkisi normal; taciz gönderemez.
+	ali.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: omerID, Seviye: model.SeviyeTaciz, Not: "hop",
+	})
+	hataZarf := ali.bekle(protokol.TipHata, 2*time.Second)
+	var hata protokol.HataVeri
+	json.Unmarshal(hataZarf.Veri, &hata)
+	if hata.Kod != protokol.HataYetkisiz {
+		t.Errorf("yetkisiz taciz reddedilmeliydi, gelen: %q", hata.Kod)
+	}
+
+	// Kurucu taciz yetkisiyle doğar; tek tıkla gönderebilmeli.
+	omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: aliID, Seviye: model.SeviyeTaciz, Not: "gel artık",
+	})
+	zarf := ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+	var gelen protokol.SeslenmeGeldiVeri
+	json.Unmarshal(zarf.Veri, &gelen)
+	if gelen.Seviye != model.SeviyeTaciz {
+		t.Errorf("kurucunun taciz çağrısı iletilmeliydi, gelen: %q", gelen.Seviye)
+	}
+}
+
 // TestSeslenmeAkisi, kurum kurmaktan seslenip yanıt almaya kadar tüm akışı doğrular.
 func TestSeslenmeAkisi(t *testing.T) {
 	o := ortamKur(t)

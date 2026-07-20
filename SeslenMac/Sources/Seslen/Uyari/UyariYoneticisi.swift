@@ -41,9 +41,15 @@ final class UyariYoneticisi {
     private let panel = UyariPaneli()
     private let kenarFlasi = KenarFlasi()
     private let balon = UyariBalonu()
+    private let taciz = TacizPenceresi()
 
-    /// Panel meşgulken gelen seslenmeler sıraya alınır.
-    private var kuyruk: [Seslenme] = []
+    /// Taciz penceresinde birlikte gösterilen çağrılar.
+    private var tacizGrubu: [Seslenme] = []
+
+    /// Panelde gösterilmeyi bekleyen seslenmeler.
+    private var panelKuyrugu: [Seslenme] = []
+    /// Panelde şu anda gösterilen grup. Boşsa panel kapalıdır.
+    private var acikGrup: [Seslenme] = []
 
     init(ayarlar: Ayarlar) {
         self.ayarlar = ayarlar
@@ -59,6 +65,17 @@ final class UyariYoneticisi {
         // Kullanıcı bu kişiyi tamamen susturmuşsa hiçbir şey yapmıyoruz.
         guard !bicim.sessiz else { return }
 
+        // Taciz kendi tam ekran penceresini açar ve alarmını kendi sürdürür;
+        // panel, balon ve tek seferlik ses onun yanında hem gereksiz hem de
+        // birbirinin sesini bastırır.
+        if seslenme.seviye == .taciz {
+            dikkatCekiyor = true
+            okunmamis.append(seslenme)
+            bildirimGonder(seslenme)
+            tacizGoster(seslenme)
+            return
+        }
+
         if bicim.ikon {
             dikkatCekiyor = true
             okunmamis.append(seslenme)
@@ -71,39 +88,128 @@ final class UyariYoneticisi {
             kenarFlasi.goster(sure: seslenme.seviye == .acil ? 4 : 2)
         }
         if bicim.panel {
-            panelGoster(seslenme)
+            panelKuyrugu.append(seslenme)
+            panelKuyrugunuIsle()
         } else if bicim.ikon {
             // Panel kapalıyken notu gösteren tek yer balon. Panel açıksa notu
             // zaten o gösteriyor; ikisini birden çıkarmak tekrar olurdu.
-            balon.goster(seslenme)
+            balon.goster(seslenme.balon)
         }
     }
 
-    private func panelGoster(_ seslenme: Seslenme) {
-        // Panel zaten açıksa üstüne yazmak yerine sıraya alıyoruz;
-        // aksi halde arka arkaya gelen iki çağrıdan biri hiç görünmez.
-        guard !panel.acik else {
-            kuyruk.append(seslenme)
+    /// Biz çevrimdışıyken birikmiş çağrıları gösterir.
+    ///
+    /// Bunlar `isle` üzerinden geçmez: her biri kendi panelini açsaydı,
+    /// bilgisayarını açan kullanıcı arka arkaya beş tam ekran pencere kapatmak
+    /// zorunda kalırdı. Geçmişte kalmış bir çağrı ekranı kesmemeli; tek bir
+    /// özet yeterlidir. Rozet ve liste yine dolar, kimse gözden kaçmaz.
+    func kacirilanlariIsle(_ seslenmeler: [Seslenme]) {
+        let gorunecekler = seslenmeler.filter {
+            !ayarlar.etkinBicim(gonderenID: $0.gonderenID, seviye: $0.seviye).sessiz
+        }
+        guard !gorunecekler.isEmpty else { return }
+
+        okunmamis.append(contentsOf: gorunecekler)
+        dikkatCekiyor = true
+
+        let adlar = gorunecekler.map(\.gonderenAd)
+        // Tekrarlı adlar özeti şişirir: aynı kişi beş kez seslenmiş olabilir.
+        var benzersiz: [String] = []
+        for ad in adlar where !benzersiz.contains(ad) { benzersiz.append(ad) }
+
+        balon.goster(BalonOgesi(
+            id: "kacirilanlar-\(gorunecekler.map(\.id).joined())",
+            baslik: "Sen yokken \(gorunecekler.count) seslenme",
+            altSatir: benzersiz.joined(separator: ", "),
+            simge: "clock.arrow.circlepath",
+            renk: gorunecekler.map(\.seviye).max()?.renk ?? .blue,
+            rozet: "KAÇIRILDI"
+        ))
+        kacirilanBildirimi(adet: gorunecekler.count, adlar: benzersiz)
+    }
+
+    /// Gönderdiğimiz bir çağrıya dönen yanıtı gösterir.
+    ///
+    /// Yanıt uyarı biçimi ayarlarına bakmaz: kullanıcı bu çağrıyı kendi
+    /// başlattığı için cevabını görmek ister, sessize alma gelen seslenmeler
+    /// içindir.
+    func yanitiGoster(_ veri: YanitGeldiVeri) {
+        balon.goster(.yanit(veri))
+    }
+
+    // MARK: - Taciz
+
+    private func tacizGoster(_ seslenme: Seslenme) {
+        tacizGrubu.append(seslenme)
+        guard let grup = SeslenmeGrubu(tacizGrubu) else { return }
+
+        if taciz.acik {
+            taciz.tazele(grup)
+            return
+        }
+        taciz.goster(grup: grup, siddet: ayarlar.sesSiddeti) { [weak self] yanit in
+            self?.tacizYanitlandi(yanit)
+        }
+    }
+
+    private func tacizYanitlandi(_ yanit: Yanit) {
+        // Tek yanıt gruptaki bütün taciz çağrılarını kapatır; aksi halde
+        // pencere kapanır kapanmaz bir sonraki çağrı için yeniden açılırdı.
+        for seslenme in tacizGrubu {
+            if !seslenme.onizleme { yanitVerildi?(seslenme.id, yanit) }
+            okunduIsaretle(seslenme.id)
+        }
+        tacizGrubu = []
+    }
+
+    // MARK: - Panel kuyruğu
+
+    /// Panel kuyruğunu gözden geçirir.
+    ///
+    /// Aynı kişiden gelen çağrılar tek panelde toplanır: arka arkaya üç ACİL
+    /// gelince üç ayrı pencereyi tek tek kapatmak gerekmesin, tek "geliyorum"
+    /// üçüne birden yanıt olsun.
+    private func panelKuyrugunuIsle() {
+        // Panel açıkken aynı kişiden yeni seslenme geldiyse pencereyi tazeliyoruz.
+        if let gonderenID = acikGrup.first?.gonderenID {
+            let ekler = panelKuyrugu.filter { $0.gonderenID == gonderenID }
+            guard !ekler.isEmpty else { return }
+            panelKuyrugu.removeAll { $0.gonderenID == gonderenID }
+            acikGrup.append(contentsOf: ekler)
+            if let grup = SeslenmeGrubu(acikGrup) { panel.tazele(grup) }
             return
         }
 
+        // Sırayı en yüksek seviyeli bekleyen belirler; araya giren bir ACİL
+        // normal seslenmelerin arkasında beklemesin.
+        guard let oncelikli = panelKuyrugu.max(by: { $0.seviye < $1.seviye }) else { return }
+        let gonderenID = oncelikli.gonderenID
+
+        acikGrup = panelKuyrugu.filter { $0.gonderenID == gonderenID }
+        panelKuyrugu.removeAll { $0.gonderenID == gonderenID }
+
+        guard let grup = SeslenmeGrubu(acikGrup) else { return }
         panel.goster(
-            seslenme: seslenme,
+            grup: grup,
             otomatikKapanma: ayarlar.panelSuresi,
-            yanitla: { [weak self] yanit in
-                self?.yanitVerildi?(seslenme.id, yanit)
-                self?.okunduIsaretle(seslenme.id)
-            },
-            kapandi: { [weak self] in
-                self?.siradakiniGoster()
-            }
+            kapandi: { [weak self] yanit in self?.grupKapandi(yanit) }
         )
     }
 
-    private func siradakiniGoster() {
-        guard !kuyruk.isEmpty else { return }
-        let sonraki = kuyruk.removeFirst()
-        panelGoster(sonraki)
+    private func grupKapandi(_ yanit: Yanit?) {
+        if let yanit {
+            // Tek yanıt gruptaki bütün çağrılara gider. Sunucu her çağrıyı ayrı
+            // tuttuğu için hepsine tek tek yollamak gerekir; kullanıcı bunu
+            // görmez, onun için tek tıktır.
+            for seslenme in acikGrup {
+                // Deneme çağrısının sunucuda karşılığı yok; yanıtını yollamak
+                // kullanıcıya sebepsiz bir "çağrı bulunamadı" hatası gösterir.
+                if !seslenme.onizleme { yanitVerildi?(seslenme.id, yanit) }
+                okunduIsaretle(seslenme.id)
+            }
+        }
+        acikGrup = []
+        panelKuyrugunuIsle()
     }
 
     /// Bir seslenmeyi okunmuş sayar.
@@ -118,6 +224,10 @@ final class UyariYoneticisi {
         dikkatCekiyor = false
         // Kullanıcı listeyi menüde gördü; balonların ekranda kalmasına gerek yok.
         balon.kapat()
+        // Kuyrukta bekleyen paneller de artık gereksiz: hepsi menüde görüldü,
+        // sırayla açılmaları kullanıcıyı boşuna pencere kapatmaya zorlar.
+        // Açık panel bilerek dokunulmaz; kullanıcı ona yanıt veriyor olabilir.
+        panelKuyrugu.removeAll()
     }
 
     /// Ayar ekranından uyarıyı denemek için örnek bir seslenme üretir.
@@ -128,7 +238,8 @@ final class UyariYoneticisi {
             gonderenAd: "Örnek Kişi",
             seviye: seviye,
             not: "Bu bir deneme uyarısıdır.",
-            geldiginde: Date()
+            geldiginde: Date(),
+            onizleme: true
         ))
     }
 
@@ -186,5 +297,23 @@ final class UyariYoneticisi {
             trigger: nil
         )
         UNUserNotificationCenter.current().add(istek)
+    }
+
+    /// Kaçırılan çağrılar için tek bir özet bildirimi yollar.
+    private func kacirilanBildirimi(adet: Int, adlar: [String]) {
+        guard Bundle.main.bundleIdentifier != nil, bildirimIzni == .verildi else { return }
+
+        let icerik = UNMutableNotificationContent()
+        icerik.title = "Sen yokken \(adet) seslenme"
+        icerik.body = adlar.joined(separator: ", ")
+        // Geçmişte kalmış çağrı acil değildir; kullanıcı ona kendi zamanında bakar.
+        icerik.interruptionLevel = .passive
+        icerik.sound = nil
+
+        UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: "kacirilanlar-\(adet)-\(Date().timeIntervalSince1970)",
+            content: icerik,
+            trigger: nil
+        ))
     }
 }

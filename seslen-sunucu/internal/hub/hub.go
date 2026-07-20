@@ -70,8 +70,66 @@ func (h *Hub) Baglat(ws *websocket.Conn, uye model.Uye) {
 	}
 	h.KurumaYayinla(uye.KurumID)
 
+	// Tam durum gittikten sonra: üye çevrimdışıyken biriken çağrılar.
+	h.kacirilanlariYolla(b)
+
 	go b.yazmaDongusu()
 	b.okumaDongusu()
+}
+
+// kacirilanlariYolla, üye bağlı değilken gelen çağrıları tek mesajda iletir.
+//
+// Çağrılar gönderildikleri anda veritabanına yazılır ama alıcı çevrimdışıysa
+// hiçbir yere ulaşmaz. Teslim burada tamamlanır: bilgisayarını açan kullanıcı
+// yokluğunda kimin seslendiğini görür.
+func (h *Hub) kacirilanlariYolla(b *Baglanti) {
+	cagrilar, err := h.depo.TeslimEdilmemisCagrilar(b.uyeID)
+	if err != nil {
+		h.kayit.Error("kaçırılan çağrılar okunamadı", "uye", b.uyeID, "hata", err)
+		return
+	}
+	if len(cagrilar) == 0 {
+		return
+	}
+
+	veriler := make([]protokol.SeslenmeGeldiVeri, 0, len(cagrilar))
+	idler := make([]string, 0, len(cagrilar))
+	for _, c := range cagrilar {
+		gonderen, err := h.depo.UyeGetir(c.GonderenID)
+		if err != nil {
+			// Gönderen kurumdan çıkarılmış olabilir; çağrıyı atlıyoruz ama
+			// teslim edilmiş sayıyoruz ki kuyrukta sonsuza kadar kalmasın.
+			idler = append(idler, c.ID)
+			continue
+		}
+		veriler = append(veriler, protokol.SeslenmeGeldiVeri{
+			CagriID:    c.ID,
+			GonderenID: c.GonderenID,
+			GonderenAd: gonderen.AdSoyad,
+			Seviye:     c.Seviye,
+			Not:        c.Not,
+			Gonderildi: c.Gonderildi.Unix(),
+		})
+		idler = append(idler, c.ID)
+	}
+
+	if len(veriler) > 0 {
+		mesaj, err := protokol.Paketle(protokol.TipKacirilanlar, protokol.KacirilanlarVeri{Cagrilar: veriler})
+		if err != nil {
+			h.kayit.Error("kaçırılanlar paketlenemedi", "uye", b.uyeID, "hata", err)
+			return
+		}
+		// Teslim ancak mesaj kuyruğa girdiyse işaretlenir; kuyruk dolup mesaj
+		// düşerse çağrılar bir sonraki bağlantıda yeniden denenir.
+		if !b.Yolla(mesaj) {
+			return
+		}
+	}
+
+	if err := h.depo.TeslimIsaretle(idler); err != nil {
+		h.kayit.Error("teslim işaretlenemedi", "uye", b.uyeID, "hata", err)
+	}
+	h.kayit.Info("kaçırılan çağrılar iletildi", "uye", b.uyeID, "adet", len(veriler))
 }
 
 // ekle, bağlantıyı kaydeder. Aynı üyenin eski oturumu varsa düşürülür.

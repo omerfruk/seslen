@@ -59,9 +59,11 @@ CREATE TABLE IF NOT EXISTS cagrilar (
 	not_metni   TEXT NOT NULL DEFAULT '',
 	gonderildi  INTEGER NOT NULL,
 	yanit       TEXT NOT NULL DEFAULT '',
-	yanit_tarih INTEGER NOT NULL DEFAULT 0
+	yanit_tarih INTEGER NOT NULL DEFAULT 0,
+	teslim_tarih INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cagrilar_kurum ON cagrilar(kurum_id, gonderildi);
+CREATE INDEX IF NOT EXISTS idx_cagrilar_teslim ON cagrilar(alici_id, teslim_tarih);
 `
 
 // Ac, veritabanını açar ve şemayı hazırlar.
@@ -77,7 +79,48 @@ func Ac(yol string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("şema oluşturulamadı: %w", err)
 	}
+	if err := gecisleriUygula(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("şema taşınamadı: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// gecisleriUygula, eski veritabanı dosyalarını güncel şemaya taşır.
+//
+// Şema `CREATE TABLE IF NOT EXISTS` ile kurulduğu için sonradan eklenen
+// kolonlar var olan dosyalara kendiliğinden gelmez.
+func gecisleriUygula(db *sql.DB) error {
+	if kolonEkle(db, "cagrilar", "teslim_tarih", "INTEGER NOT NULL DEFAULT 0") {
+		// Kolon bu açılışta eklendi: eldeki çağrıların tamamı geçmişte kalmış
+		// sayılır. Aksi halde sürüm yükseltmesinden sonra herkes aylar önceye
+		// ait bütün seslenmeleri bir anda alırdı.
+		if _, err := db.Exec(`UPDATE cagrilar SET teslim_tarih = gonderildi`); err != nil {
+			return err
+		}
+	}
+
+	// Taciz seviyesi eklenmeden önce kurulan kurumlarda kurucular `acil` ile
+	// kaldı; taciz düğmesi onlara hiç görünmedi. Kurucu bunu arayüzden de
+	// düzeltemez, çünkü yönetim işlemleri kurucuya dokunamaz — düzeltmenin tek
+	// yeri burası.
+	//
+	// Her açılışta çalışması sakıncasız: kurucunun seviyesini kimse
+	// düşüremediği için koşul ilk seferden sonra hiçbir satırı tutmaz.
+	if _, err := db.Exec(
+		`UPDATE uyeler SET max_seviye = ? WHERE rol = ? AND max_seviye = ?`,
+		model.SeviyeTaciz, model.RolKurucu, model.SeviyeAcil,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// kolonEkle, kolonu eklemeyi dener ve gerçekten eklendiyse true döner.
+// Kolon zaten varsa ALTER hata verir; bu beklenen durumdur, sessizce geçilir.
+func kolonEkle(db *sql.DB, tablo, kolon, tanim string) bool {
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tablo, kolon, tanim))
+	return err == nil
 }
 
 // Kapat, bağlantıyı kapatır.
@@ -136,7 +179,9 @@ func (s *Store) KurumOlustur(kurumAd, kurucuAd string) (model.Kurum, model.Uye, 
 		KurumID:     kurum.ID,
 		AdSoyad:     strings.TrimSpace(kurucuAd),
 		Rol:         model.RolKurucu,
-		MaxSeviye:   model.SeviyeAcil,
+		// Kurucu en üst seviyeyi kendinde tutar; taciz yetkisini kimin
+		// kullanacağına kurumu kuran kişi karar verir.
+		MaxSeviye: model.SeviyeTaciz,
 		Onayli:      true,
 		Durum:       model.DurumCevrimdisi,
 		SonGorulme:  simdi,
@@ -404,6 +449,76 @@ func (s *Store) CagriGetir(id string) (model.Cagri, error) {
 		c.YanitTarih = time.Unix(yanitTarih, 0)
 	}
 	return c, nil
+}
+
+// teslimGecmisSiniri, çevrimdışıyken biriken çağrıların ne kadar geriye kadar
+// iletileceğidir. Daha eskisi kullanıcıya bilgi değil gürültü olur: sabah
+// bilgisayarı açan biri dünkü "neredesin" çağrılarını görmek istemez.
+const teslimGecmisSiniri = 12 * time.Hour
+
+// TeslimEdilmemisCagrilar, üye çevrimdışıyken birikmiş, henüz iletilmemiş ve
+// yanıtlanmamış çağrıları eskiden yeniye döner.
+func (s *Store) TeslimEdilmemisCagrilar(aliciID string) ([]model.Cagri, error) {
+	esik := time.Now().Add(-teslimGecmisSiniri).Unix()
+	satirlar, err := s.db.Query(
+		`SELECT id, kurum_id, gonderen_id, alici_id, seviye, not_metni, gonderildi, yanit, yanit_tarih
+		 FROM cagrilar
+		 WHERE alici_id = ? AND teslim_tarih = 0 AND yanit = '' AND gonderildi >= ?
+		 ORDER BY gonderildi`,
+		aliciID, esik,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer satirlar.Close()
+
+	var liste []model.Cagri
+	for satirlar.Next() {
+		var c model.Cagri
+		var gonderildi, yanitTarih int64
+		if err := satirlar.Scan(
+			&c.ID, &c.KurumID, &c.GonderenID, &c.AliciID, &c.Seviye,
+			&c.Not, &gonderildi, &c.Yanit, &yanitTarih,
+		); err != nil {
+			return nil, err
+		}
+		c.Gonderildi = time.Unix(gonderildi, 0)
+		if yanitTarih > 0 {
+			c.YanitTarih = time.Unix(yanitTarih, 0)
+		}
+		liste = append(liste, c)
+	}
+	return liste, satirlar.Err()
+}
+
+// TeslimIsaretle, verilen çağrıları iletilmiş sayar; bir daha kuyruğa girmezler.
+func (s *Store) TeslimIsaretle(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	yerTutucu := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	argumanlar := make([]any, 0, len(ids)+1)
+	argumanlar = append(argumanlar, time.Now().Unix())
+	for _, id := range ids {
+		argumanlar = append(argumanlar, id)
+	}
+	_, err := s.db.Exec(
+		fmt.Sprintf(`UPDATE cagrilar SET teslim_tarih = ? WHERE id IN (%s)`, yerTutucu),
+		argumanlar...,
+	)
+	return err
+}
+
+// YanitsizCagriSayisi, iki üye arasında belirli seviyede gönderilmiş, verilen
+// andan sonraki ve hâlâ yanıtlanmamış çağrıların sayısını verir.
+func (s *Store) YanitsizCagriSayisi(gonderenID, aliciID string, seviye model.Seviye, baslangic time.Time) (int, error) {
+	var sayi int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM cagrilar
+		 WHERE gonderen_id = ? AND alici_id = ? AND seviye = ? AND yanit = '' AND gonderildi >= ?`,
+		gonderenID, aliciID, seviye, baslangic.Unix(),
+	).Scan(&sayi)
+	return sayi, err
 }
 
 // YeniCagriID, çağrı kimliği üretir.

@@ -10,6 +10,9 @@ const (
 	SeviyeNormal Seviye = "normal"
 	SeviyeOnemli Seviye = "onemli"
 	SeviyeAcil   Seviye = "acil"
+	// SeviyeTaciz, yanıtsız kalan ACİL çağrıların üstüne çıkan son basamaktır.
+	// Alıcının ekranında kapanmayan, geri sayan ve sürekli çalan bir uyarı açar.
+	SeviyeTaciz Seviye = "taciz"
 )
 
 // siralama, seviyelerin birbirine göre ağırlığını verir.
@@ -17,6 +20,7 @@ var siralama = map[Seviye]int{
 	SeviyeNormal: 1,
 	SeviyeOnemli: 2,
 	SeviyeAcil:   3,
+	SeviyeTaciz:  4,
 }
 
 // Gecerli, seviyenin tanımlı değerlerden biri olup olmadığını söyler.

@@ -57,6 +57,10 @@ struct AnaGorunum: View {
                 hataSeridi(hata)
             }
 
+            if let bilgi = istemci.sonBilgi {
+                bilgiSeridi(bilgi)
+            }
+
             haykirSeridi
 
             Divider()
@@ -179,6 +183,24 @@ struct AnaGorunum: View {
             // Hata mesajı birkaç saniye sonra kendiliğinden kaybolsun.
             try? await Task.sleep(for: .seconds(5))
             istemci.sonHata = nil
+        }
+    }
+
+    /// Hata değil bilgi: seslenme kaybolmadı, yalnızca gecikecek. Bu yüzden
+    /// kırmızı değil mavi ve daha uzun süre durur — kullanıcı yeniden denemesin.
+    private func bilgiSeridi(_ mesaj: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "clock.badge.checkmark")
+            Text(mesaj).font(.caption).lineLimit(2)
+            Spacer()
+        }
+        .foregroundStyle(.blue)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(Color.blue.opacity(0.12))
+        .task(id: mesaj) {
+            try? await Task.sleep(for: .seconds(7))
+            istemci.sonBilgi = nil
         }
     }
 

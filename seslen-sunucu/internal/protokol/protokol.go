@@ -27,11 +27,13 @@ const (
 
 // Sunucudan istemciye giden mesaj tipleri.
 const (
-	TipDurumTam     Tip = "durum_tam"     // kurumun tam anlık görüntüsü
+	TipDurumTam      Tip = "durum_tam"      // kurumun tam anlık görüntüsü
 	TipSeslenmeGeldi Tip = "seslenme_geldi" // sana biri sesleniyor
-	TipYanitGeldi   Tip = "yanit_geldi"   // seslendiğin kişi yanıtladı
-	TipHata         Tip = "hata"          // işlem reddedildi
-	TipNabizYanit   Tip = "nabiz_yanit"   // nabız cevabı
+	TipKacirilanlar  Tip = "kacirilanlar"   // sen yokken birikenler
+	TipYanitGeldi    Tip = "yanit_geldi"    // seslendiğin kişi yanıtladı
+	TipBilgi         Tip = "bilgi"          // işlem kabul edildi, bilgi notu var
+	TipHata          Tip = "hata"           // işlem reddedildi
+	TipNabizYanit    Tip = "nabiz_yanit"    // nabız cevabı
 )
 
 // Zarf, tüm mesajların dış kabuğudur. Veri alanı Tip'e göre çözümlenir.
@@ -101,6 +103,20 @@ type SeslenmeGeldiVeri struct {
 	Yayin bool `json:"yayin"`
 }
 
+// KacirilanlarVeri, üye çevrimdışıyken biriken çağrıları tek mesajda taşır.
+//
+// Her biri ayrı ayrı `seslenme_geldi` olarak yollansaydı, bilgisayarını açan
+// kullanıcının ekranına arka arkaya paneller yağardı; istemci bunu tek bir
+// "sen yokken 3 seslenme" özeti olarak gösterir.
+type KacirilanlarVeri struct {
+	Cagrilar []SeslenmeGeldiVeri `json:"cagrilar"`
+}
+
+// BilgiVeri, reddedilmemiş ama kullanıcıya söylenmesi gereken bir durumu taşır.
+type BilgiVeri struct {
+	Mesaj string `json:"mesaj"`
+}
+
 // YanitGeldiVeri, gönderene dönen cevaptır.
 type YanitGeldiVeri struct {
 	CagriID   string `json:"cagriID"`
@@ -140,5 +156,11 @@ func Paketle(tip Tip, veri any) ([]byte, error) {
 // HataPaketle, hata zarfını hazırlar.
 func HataPaketle(kod, mesaj string) []byte {
 	ham, _ := Paketle(TipHata, HataVeri{Kod: kod, Mesaj: mesaj})
+	return ham
+}
+
+// BilgiPaketle, bilgi zarfını hazırlar.
+func BilgiPaketle(mesaj string) []byte {
+	ham, _ := Paketle(TipBilgi, BilgiVeri{Mesaj: mesaj})
 	return ham
 }

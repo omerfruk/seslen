@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -51,6 +52,8 @@ final class SunucuIstemcisi {
     private(set) var bekleyen: [Uye] = []
     /// Kullanıcıya gösterilecek son hata mesajı (menüde kısa süre görünür).
     var sonHata: String?
+    /// Hata olmayan ama kullanıcının bilmesi gereken son durum (menüde görünür).
+    var sonBilgi: String?
 
     /// Oturum açılmış mı? Token varsa evet.
     var oturumAcik: Bool { token != nil }
@@ -64,6 +67,8 @@ final class SunucuIstemcisi {
 
     /// Yeni bir seslenme geldiğinde çağrılır.
     var seslenmeGeldi: ((Seslenme) -> Void)?
+    /// Biz çevrimdışıyken birikmiş çağrılar bağlanınca toplu olarak gelir.
+    var kacirilanlarGeldi: (([Seslenme]) -> Void)?
     /// Gönderdiğimiz bir çağrıya yanıt geldiğinde çağrılır.
     var yanitGeldi: ((YanitGeldiVeri) -> Void)?
 
@@ -86,6 +91,27 @@ final class SunucuIstemcisi {
     init(ayarlar: Ayarlar) {
         self.ayarlar = ayarlar
         self.token = Anahtarlik.tokenOku()
+        uyanmayiIzle()
+    }
+
+    /// Mac uykudan uyandığında hemen yeniden bağlanır.
+    ///
+    /// Uyku sırasında soket çoktan kopmuştur ama üstel geri çekilme yüzünden
+    /// bir sonraki deneme 30 saniyeye kadar gecikebilir. Kullanıcı kapağı
+    /// açtığında kendisini bekleyen seslenmeleri yarım dakika sonra değil
+    /// hemen görmeli.
+    private func uyanmayiIzle() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.oturumAcik, !self.kapatiliyor else { return }
+                self.yenidenDenemeSayisi = 0
+                self.yenidenBaglan()
+            }
+        }
     }
 
     // MARK: - Oturum açma
@@ -282,19 +308,20 @@ final class SunucuIstemcisi {
 
         case .seslenmeGeldi:
             guard let gelen = try? zarf.veri(SeslenmeGeldiVeri.self) else { return }
-            seslenmeGeldi?(Seslenme(
-                id: gelen.cagriID,
-                gonderenID: gelen.gonderenID,
-                gonderenAd: gelen.gonderenAd,
-                seviye: gelen.seviye,
-                not: gelen.not,
-                geldiginde: Date(timeIntervalSince1970: TimeInterval(gelen.gonderildi)),
-                yayin: gelen.yayin
-            ))
+            seslenmeGeldi?(seslenmeyeCevir(gelen))
+
+        case .kacirilanlar:
+            guard let gelen = try? zarf.veri(KacirilanlarVeri.self), !gelen.cagrilar.isEmpty
+            else { return }
+            kacirilanlarGeldi?(gelen.cagrilar.map(seslenmeyeCevir))
 
         case .yanitGeldi:
             guard let gelen = try? zarf.veri(YanitGeldiVeri.self) else { return }
             yanitGeldi?(gelen)
+
+        case .bilgi:
+            guard let gelen = try? zarf.veri(BilgiVeri.self) else { return }
+            sonBilgi = gelen.mesaj
 
         case .hata:
             guard let hata = try? zarf.veri(HataVeri.self) else { return }
@@ -306,6 +333,18 @@ final class SunucuIstemcisi {
         default:
             break
         }
+    }
+
+    private func seslenmeyeCevir(_ gelen: SeslenmeGeldiVeri) -> Seslenme {
+        Seslenme(
+            id: gelen.cagriID,
+            gonderenID: gelen.gonderenID,
+            gonderenAd: gelen.gonderenAd,
+            seviye: gelen.seviye,
+            not: gelen.not,
+            geldiginde: Date(timeIntervalSince1970: TimeInterval(gelen.gonderildi)),
+            yayin: gelen.yayin
+        )
     }
 
     // MARK: - Giden mesajlar

@@ -18,7 +18,9 @@ enum MesajTipi: String, Codable, Sendable {
     // Sunucu → İstemci
     case durumTam = "durum_tam"
     case seslenmeGeldi = "seslenme_geldi"
+    case kacirilanlar
     case yanitGeldi = "yanit_geldi"
+    case bilgi
     case hata
     case nabizYanit = "nabiz_yanit"
 }
@@ -102,6 +104,24 @@ struct SeslenmeGeldiVeri: Decodable, Sendable {
         // Eski sunucu bu alanı hiç göndermez; alanın yokluğu "yayın değil" demektir.
         yayin = try k.decodeIfPresent(Bool.self, forKey: .yayin) ?? false
     }
+}
+
+/// Üye çevrimdışıyken biriken çağrılar. Tek mesajda gelir ki bilgisayarını açan
+/// kullanıcının ekranına arka arkaya paneller yağmasın.
+struct KacirilanlarVeri: Decodable, Sendable {
+    var cagrilar: [SeslenmeGeldiVeri]
+
+    enum CodingKeys: String, CodingKey { case cagrilar }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        cagrilar = try k.decodeIfPresent([SeslenmeGeldiVeri].self, forKey: .cagrilar) ?? []
+    }
+}
+
+/// Reddedilmemiş ama kullanıcıya söylenmesi gereken bir durum.
+struct BilgiVeri: Decodable, Sendable {
+    var mesaj: String
 }
 
 struct YanitGeldiVeri: Decodable, Sendable {

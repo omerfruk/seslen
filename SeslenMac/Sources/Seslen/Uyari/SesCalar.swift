@@ -10,6 +10,7 @@ enum SesCalar {
         case .normal: "Tink"      // kısa, yumuşak
         case .onemli: "Ping"      // belirgin
         case .acil: "Sosumi"      // keskin, dikkat çekici
+        case .taciz: "Basso"      // boğuk ve rahatsız edici
         }
     }
 
@@ -40,6 +41,30 @@ enum SesCalar {
                 calmaAdimi(seviye: seviye, siddet: siddet, kalan: kalan - 1)
             }
         }
+    }
+
+    /// Taciz alarmının iki çalış arasında beklediği süre.
+    private static let tacizAralik: TimeInterval = 1.2
+
+    private static var tacizGorevi: Task<Void, Never>?
+
+    /// Taciz alarmını başlatır; `tacizDurdur` çağrılana kadar durmadan çalar.
+    /// Diğer seviyelerden farkı bu: taciz sesinin sonu yoktur, yanıtı vardır.
+    static func tacizBaslat(siddet: Double) {
+        guard tacizGorevi == nil else { return }
+        tacizGorevi = Task { @MainActor in
+            while !Task.isCancelled {
+                onizle(seviye: .taciz, siddet: siddet)
+                try? await Task.sleep(for: .seconds(tacizAralik))
+            }
+        }
+    }
+
+    /// Taciz alarmını susturur.
+    static func tacizDurdur() {
+        tacizGorevi?.cancel()
+        tacizGorevi = nil
+        calan?.stop()
     }
 
     /// Ayar ekranında önizleme için tek sefer çalar.

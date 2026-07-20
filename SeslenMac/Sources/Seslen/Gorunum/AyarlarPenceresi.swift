@@ -69,6 +69,8 @@ private struct GenelSekmesi: View {
                 }
             }
 
+            SurumBolumu()
+
             // Sunucu adresi normalde gizli: uygulamaya gömülüdür ve
             // kullanıcıların onunla uğraşmasına gerek yoktur. Geliştirme ya da
             // sunucu taşıma durumları için buradan erişilebilir kalıyor.
@@ -100,6 +102,85 @@ private struct GenelSekmesi: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Kurulu sürümü gösterir ve yenisi çıkmış mı diye bakar.
+///
+/// Uygulama kendini güncelleyemiyor (imzalı paket ve Apple hesabı gerektirir),
+/// bu yüzden bölüm haber verip kurulum yolunu göstermekle yetinir.
+private struct SurumBolumu: View {
+    @State private var denetci = GuncellemeDenetcisi()
+    @State private var kopyalandi = false
+
+    var body: some View {
+        Section("Sürüm") {
+            LabeledContent("Kurulu sürüm") {
+                Text(denetci.kuruluSurum.isEmpty ? "geliştirme kipi" : denetci.kuruluSurum)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                durumMetni
+                Spacer()
+                Button("Güncellemeleri denetle") {
+                    Task { await denetci.denetle() }
+                }
+                .disabled(denetci.durum == .denetleniyor)
+            }
+
+            if case .yeniSurumVar(let surum, let adres) = denetci.durum {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Homebrew ile kurulduysa güncelleme tek komut; indirme
+                    // bağlantısı elle kuranlar için duruyor.
+                    HStack(spacing: 6) {
+                        Text(GuncellemeDenetcisi.brewKomutu)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color.secondary.opacity(0.12))
+                            }
+                        Button(kopyalandi ? "Kopyalandı" : "Kopyala") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                                GuncellemeDenetcisi.brewKomutu, forType: .string)
+                            kopyalandi = true
+                        }
+                        .controlSize(.small)
+                    }
+                    Button("\(surum) sürümünün sayfasını aç") {
+                        NSWorkspace.shared.open(adres)
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var durumMetni: some View {
+        switch denetci.durum {
+        case .bilinmiyor:
+            EmptyView()
+        case .denetleniyor:
+            Text("Denetleniyor…").font(.caption).foregroundStyle(.secondary)
+        case .guncel:
+            Label("En güncel sürümü kullanıyorsunuz", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .yeniSurumVar(let surum, _):
+            Label("\(surum) sürümü çıktı", systemImage: "arrow.down.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.blue)
+        case .hata(let mesaj):
+            Label(mesaj, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
     }
 }
 

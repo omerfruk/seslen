@@ -56,6 +56,10 @@ final class Ayarlar {
 
     /// Belirli bir gönderen ve seviye için geçerli olacak uyarı biçimini hesaplar.
     func etkinBicim(gonderenID: String, seviye: Seviye) -> UyariBicimi {
+        // Taciz hiçbir koşulda susturulamaz; `acilEzsin` kapalı olsa bile.
+        // Susturulabilseydi zaten taciz olmazdı.
+        if seviye == .taciz { return .hepsi }
+
         // ACİL, kullanıcının kişisel kısıtlamalarını ezer — aksi halde
         // "acil" seviyesinin bir anlamı kalmaz.
         if seviye == .acil, acilEzsin { return .hepsi }

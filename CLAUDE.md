@@ -65,7 +65,22 @@ hiçbir hata mesajı çıkmaz. `dagitim/simge-dogrula.swift` paketleme sırasın
 tüm adları tarar; bu adım atlanmamalı. (Bu hata bir kez yaşandı:
 `megaphone.badge.xmark` diye bir simge yok.)
 
-**4. Onay bekleyen üye de bağlı kalır.**
+Betik iki biçimi tarar: `systemName:`/`systemImage:` gibi doğrudan kullanımlar
+ve `Seviye.simge` gibi **gövdesi olan `simge` özelliklerinin** içindeki çıplak
+dizgiler. İkincisi olmadan `Image(systemName: seviye.simge)` biçimindeki
+kullanımlar hiç denetlenmiyordu — tarihî hata da tam olarak oradaydı.
+
+**4. Teslim edilemeyen çağrı kaybolmaz.**
+Alıcı çevrimdışıysa çağrı `cagrilar.teslim_tarih = 0` olarak bekler ve üye
+bağlandığı anda `kacirilanlariYolla` ile tek bir `kacirilanlar` mesajında
+iletilir. Gönderene hata değil **bilgi** döner (`TipBilgi`) — hata dönseydi
+kullanıcı seslenmenin kaybolduğunu sanıp tekrar tekrar denerdi.
+
+İki kasıtlı istisna: **yayın kuyruğa girmez** (saatler sonra teslim edilen bir
+"herkese sesleniyorum" gürültüdür, gönderildiği anda teslim sayılır) ve kuyruk
+`teslimGecmisSiniri` kadar geriye bakar.
+
+**5. Onay bekleyen üye de bağlı kalır.**
 `hub.KurumaYayinla`, alıcıyı önce onaylı listede sonra bekleyen listede arar.
 Yalnızca onaylı listede arayıp bulamayınca oturumu kapatmak, katılan hiç
 kimsenin "onay bekleniyor" ekranını görememesine yol açar.
@@ -78,7 +93,43 @@ Karar tek yerde: `Ayarlar.etkinBicim(gonderenID:seviye:)`.
 - Kişi bazlı ayar `Ayarlar.kisisel[uyeID]`, yoksa `Ayarlar.varsayilan`.
 - **ACİL kişisel ayarları ezer** (`acilEzsin` açıkken) — yoksa acil seviyenin
   anlamı kalmaz.
+- **TACİZ her koşulda ezer**, `acilEzsin` kapalı olsa bile. Susturulabilseydi
+  taciz olmazdı.
 - Normal seviye kasten hafiftir: panel ve kenar flaşı devreye girmez.
+
+**Balonlar kendiliğinden kapanmaz.** Sağ üstteki balon eskiden altı saniyede
+siliniyordu ve kullanıcılar okumaya fırsat bulamadıklarını bildirdi; artık
+yalnızca "Okudum" düğmesiyle kapanır. Gövdeye tıklamak da kasten bir şey yapmaz.
+Zamanlayıcıyı geri koyma. Ekrana sığmayan balonlar düşürülmez, kuyrukta bekleyip
+alttaki sayaçta görünür — düşürmek okunmamış seslenmeyi yok etmek olurdu.
+Kaçış yolu menüyü açmaktır (`hepsiniTemizle`).
+
+Balon penceresi anahtar pencere olmadığı için barındırıcısı `acceptsFirstMouse`
+döndürür; yoksa "Okudum" düğmesine ilk tıklama pencereyi öne getirmek için
+harcanır ve iki kez basmak gerekir.
+
+Aynı kişiden arka arkaya gelen çağrılar **tek panelde birleşir**
+(`UyariYoneticisi.panelKuyrugunuIsle`). Üç ACİL için üç ayrı pencere açmak,
+kullanıcıyı üç kez aynı şeyi kapatmaya zorlar; verilen tek yanıt gruptaki
+bütün çağrılara ayrı ayrı gönderilir.
+
+## Taciz seviyesi
+
+`normal < onemli < acil < taciz`. Taciz, alıcının ekranında yanıtlanana kadar
+kapanmayan tam ekran pencere (`TacizPenceresi`) ve durmayan alarm açar.
+
+İki yolu var ve ikisinin yetki kuralı **kasten** farklıdır:
+
+- **Elle**: `MaxSeviye` taciz olan biri tek tıkla gönderir. Kurucu bu yetkiyle
+  doğar, gerisini o dağıtır.
+- **Kendiliğinden**: 15 dakika içinde üçüncü yanıtsız ACİL, `seviyeyiYukselt`
+  tarafından tacize çevrilir. Burada ayrıca yetki aranmaz — yetkiyi veren şey
+  alıcının üç çağrıyı yanıtsız bırakmış olmasıdır.
+
+Penceredeki geri sayım ve "imha" metni şakadır; bu yüzden en üstte her zaman
+Seslen başlığı ve kimin çağırdığı yazar. Şaka olduğu anlaşılmayan bir tam ekran
+geri sayım fidye yazılımı sanılır ve kurumsal makinede güvenlik ihbarına yol
+açar. Bu çerçeveyi kaldırma.
 
 Panel ve kenar flaşı `.screenSaver` pencere seviyesindedir; tam ekran
 uygulamaların ve **Rahatsız Etmeyin kipinin üstünde** görünürler. Sistem

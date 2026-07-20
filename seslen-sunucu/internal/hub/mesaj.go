@@ -13,6 +13,15 @@ import (
 // maksNotUzunlugu, seslenmeye eklenen kısa notun sınırıdır.
 const maksNotUzunlugu = 140
 
+// tacizEsigi, kaç yanıtsız ACİL'den sonra çağrının kendiliğinden taciz
+// seviyesine yükseleceğidir. Eşiğe ulaşan çağrının kendisi tacize dönüşür.
+const tacizEsigi = 3
+
+// tacizPenceresi, yanıtsız ACİL'lerin sayıldığı zaman aralığıdır. Sınır
+// olmasaydı sabah yanıtsız kalan iki çağrı, akşam gönderilen sıradan bir
+// ACİL'i tacize çevirirdi.
+const tacizPenceresi = 15 * time.Minute
+
 // notKisalt, kullanıcının yazdığı notu kırpar ve sınıra sığdırır.
 // Sınır harf sayısına göredir: bayt sayarak kesmek Türkçe harflerin
 // ortasından bölüp bozuk UTF-8 üretebilir.
@@ -104,7 +113,7 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 		KurumID:    gonderen.KurumID,
 		GonderenID: gonderen.ID,
 		AliciID:    alici.ID,
-		Seviye:     istek.Seviye,
+		Seviye:     h.seviyeyiYukselt(gonderen.ID, alici.ID, istek.Seviye),
 		Not:        notKisalt(istek.Not),
 		Gonderildi: time.Now(),
 	}
@@ -127,15 +136,46 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 		return
 	}
 
-	if !h.UyeyeGonder(alici.ID, mesaj) {
-		// Alıcı çevrimdışı. Çağrı kaydedildi ama şu an iletilemiyor;
-		// gönderene bunu dürüstçe bildiriyoruz ki tekrar denesin.
-		b.hata(protokol.HataBulunamadi, alici.AdSoyad+" şu anda çevrimdışı")
-		return
+	if h.UyeyeGonder(alici.ID, mesaj) {
+		if err := h.depo.TeslimIsaretle([]string{cagri.ID}); err != nil {
+			h.kayit.Error("teslim işaretlenemedi", "cagri", cagri.ID, "hata", err)
+		}
+	} else {
+		// Alıcı çevrimdışı. Çağrı kuyrukta kalır ve alıcı bağlandığı anda
+		// iletilir; bu yüzden gönderene hata değil bilgi dönüyoruz. Eskiden
+		// hata dönerdi ve kullanıcı seslenmenin kaybolduğunu sanıp tekrar
+		// tekrar denerdi.
+		b.Yolla(protokol.BilgiPaketle(alici.AdSoyad + " şu anda çevrimdışı — bilgisayarını açtığında görecek"))
 	}
 
-	h.kayit.Info("seslenme iletildi",
-		"gonderen", gonderen.AdSoyad, "alici", alici.AdSoyad, "seviye", cagri.Seviye)
+	h.kayit.Info("seslenme kaydedildi",
+		"gonderen", gonderen.AdSoyad, "alici", alici.AdSoyad, "seviye", cagri.Seviye,
+		"cevrimici", h.Cevrimici(alici.ID))
+}
+
+// seviyeyiYukselt, yanıtsız kalan ACİL çağrılar birikmişse seslenmeyi taciz
+// seviyesine çıkarır.
+//
+// Bu yükseltme için ayrıca taciz yetkisi aranmaz; yetkiyi veren şey alıcının
+// arka arkaya üç acil çağrıyı yanıtsız bırakmış olmasıdır. Elle taciz göndermek
+// ise `MaxSeviye` ile sınırlıdır — biri kasten, diğeri hak edilerek gelir.
+func (h *Hub) seviyeyiYukselt(gonderenID, aliciID string, istenen model.Seviye) model.Seviye {
+	if istenen != model.SeviyeAcil {
+		return istenen
+	}
+	yanitsiz, err := h.depo.YanitsizCagriSayisi(
+		gonderenID, aliciID, model.SeviyeAcil, time.Now().Add(-tacizPenceresi))
+	if err != nil {
+		h.kayit.Error("yanıtsız çağrılar sayılamadı", "hata", err)
+		return istenen
+	}
+	// Sayım bu çağrıyı henüz içermiyor: eşiğe onunla birlikte ulaşılır.
+	if yanitsiz+1 >= tacizEsigi {
+		h.kayit.Info("çağrı tacize yükseltildi",
+			"gonderen", gonderenID, "alici", aliciID, "yanitsiz", yanitsiz)
+		return model.SeviyeTaciz
+	}
+	return istenen
 }
 
 // haykirIsle, kurumdaki herkese aynı anda seslenir.
@@ -169,6 +209,10 @@ func (h *Hub) haykirIsle(b *Baglanti, ham json.RawMessage) {
 	not := notKisalt(istek.Not)
 	simdi := time.Now()
 	ulasan := 0
+	// Yayın kuyruğa girmez: saatler sonra teslim edilen bir "herkese
+	// sesleniyorum" bilgi değil gürültüdür. Bu yüzden yayın çağrıları
+	// ulaşsın ulaşmasın teslim edilmiş sayılır.
+	yayilanlar := make([]string, 0, len(uyeler))
 
 	for _, alici := range uyeler {
 		if alici.ID == gonderen.ID {
@@ -206,6 +250,11 @@ func (h *Hub) haykirIsle(b *Baglanti, ham json.RawMessage) {
 		if h.UyeyeGonder(alici.ID, mesaj) {
 			ulasan++
 		}
+		yayilanlar = append(yayilanlar, cagri.ID)
+	}
+
+	if err := h.depo.TeslimIsaretle(yayilanlar); err != nil {
+		h.kayit.Error("yayın teslimi işaretlenemedi", "hata", err)
 	}
 
 	if ulasan == 0 {
