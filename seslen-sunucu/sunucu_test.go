@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -239,6 +240,89 @@ func TestYayinKuyrugaGirmez(t *testing.T) {
 	ali2 := o.baglan(aliToken, aliID)
 	ali2.yolla(protokol.TipNabiz, nil)
 	ali2.beklemeyen(protokol.TipKacirilanlar, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// eskiSemaSQL, teslim kuyruğu eklenmeden önceki şemadır.
+//
+// Testlerin tamamı sıfırdan veritabanı kurduğu için yükseltme yolu hiç
+// sınanmıyordu; bu yüzden şemaya konan bir indeksin, kolonu ekleyen geçişten
+// önce çalıştığı fark edilmedi ve sunucu var olan veritabanıyla açılamadı.
+const eskiSemaSQL = `
+CREATE TABLE kurumlar (
+	id           TEXT PRIMARY KEY,
+	ad           TEXT NOT NULL,
+	katilim_kodu TEXT NOT NULL UNIQUE,
+	olusturuldu  INTEGER NOT NULL
+);
+CREATE TABLE uyeler (
+	id          TEXT PRIMARY KEY,
+	kurum_id    TEXT NOT NULL REFERENCES kurumlar(id) ON DELETE CASCADE,
+	ad_soyad    TEXT NOT NULL,
+	rol         TEXT NOT NULL,
+	max_seviye  TEXT NOT NULL,
+	onayli      INTEGER NOT NULL DEFAULT 0,
+	durum       TEXT NOT NULL DEFAULT 'cevrimdisi',
+	token_ozet  TEXT NOT NULL UNIQUE,
+	son_gorulme INTEGER NOT NULL,
+	olusturuldu INTEGER NOT NULL
+);
+CREATE TABLE cagrilar (
+	id          TEXT PRIMARY KEY,
+	kurum_id    TEXT NOT NULL,
+	gonderen_id TEXT NOT NULL,
+	alici_id    TEXT NOT NULL,
+	seviye      TEXT NOT NULL,
+	not_metni   TEXT NOT NULL DEFAULT '',
+	gonderildi  INTEGER NOT NULL,
+	yanit       TEXT NOT NULL DEFAULT '',
+	yanit_tarih INTEGER NOT NULL DEFAULT 0
+);
+`
+
+// TestEskiSemaAcilir, önceki sürümde oluşmuş bir veritabanının açılabildiğini
+// doğrular. Bu geçmediğinde sunucu hiç başlamaz.
+func TestEskiSemaAcilir(t *testing.T) {
+	yol := filepath.Join(t.TempDir(), "eski.db")
+
+	ham, err := sql.Open("sqlite", yol)
+	if err != nil {
+		t.Fatalf("sqlite açılamadı: %v", err)
+	}
+	if _, err := ham.Exec(eskiSemaSQL); err != nil {
+		t.Fatalf("eski şema kurulamadı: %v", err)
+	}
+	// Yükseltmeden önce var olan bir çağrı: geçmişte kalmış sayılmalı, yoksa
+	// sürüm yükseltmesinden sonra herkese eski seslenmeler yağar.
+	simdi := time.Now().Unix()
+	if _, err := ham.Exec(
+		`INSERT INTO cagrilar (id, kurum_id, gonderen_id, alici_id, seviye, not_metni, gonderildi)
+		 VALUES ('c1', 'k1', 'g1', 'a1', 'normal', 'eski çağrı', ?)`, simdi,
+	); err != nil {
+		t.Fatalf("eski çağrı yazılamadı: %v", err)
+	}
+	ham.Close()
+
+	depo, err := store.Ac(yol)
+	if err != nil {
+		t.Fatalf("eski şemalı veritabanı açılamadı: %v", err)
+	}
+	defer depo.Kapat()
+
+	bekleyen, err := depo.TeslimEdilmemisCagrilar("a1")
+	if err != nil {
+		t.Fatalf("teslim kuyruğu okunamadı: %v", err)
+	}
+	if len(bekleyen) != 0 {
+		t.Errorf("yükseltmeden önceki çağrılar teslim edilmiş sayılmalıydı, gelen: %d", len(bekleyen))
+	}
+
+	// İkinci açılış da sorunsuz olmalı: geçişler yinelenebilir olmalı.
+	depo.Kapat()
+	tekrar, err := store.Ac(yol)
+	if err != nil {
+		t.Fatalf("ikinci açılış başarısız: %v", err)
+	}
+	tekrar.Kapat()
 }
 
 // TestKurucuTacizGecisi, taciz seviyesi eklenmeden önce kurulmuş kurumların

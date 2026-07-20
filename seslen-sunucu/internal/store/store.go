@@ -63,7 +63,6 @@ CREATE TABLE IF NOT EXISTS cagrilar (
 	teslim_tarih INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cagrilar_kurum ON cagrilar(kurum_id, gonderildi);
-CREATE INDEX IF NOT EXISTS idx_cagrilar_teslim ON cagrilar(alici_id, teslim_tarih);
 `
 
 // Ac, veritabanını açar ve şemayı hazırlar.
@@ -98,6 +97,16 @@ func gecisleriUygula(db *sql.DB) error {
 		if _, err := db.Exec(`UPDATE cagrilar SET teslim_tarih = gonderildi`); err != nil {
 			return err
 		}
+	}
+
+	// Bu indeks şemada değil burada kurulur; şema, kolonu ekleyen geçişten önce
+	// çalıştığı için var olan veritabanlarında "no such column" ile patlardı.
+	// Kolona dayanan her indeks, kolonun eklendiğinden emin olunduktan sonra
+	// gelmelidir.
+	if _, err := db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_cagrilar_teslim ON cagrilar(alici_id, teslim_tarih)`,
+	); err != nil {
+		return err
 	}
 
 	// Taciz seviyesi eklenmeden önce kurulan kurumlarda kurucular `acil` ile
