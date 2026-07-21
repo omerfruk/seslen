@@ -75,7 +75,8 @@ struct AnaGorunum: View {
                     anket: anket,
                     benimID: istemci.ben?.id,
                     oyVer: { istemci.anketOyVer(anketID: anket.id, secenek: $0) },
-                    bitir: { istemci.anketBitir(anketID: anket.id) }
+                    bitir: { istemci.anketBitir(anketID: anket.id) },
+                    gizle: { istemci.anketiGizle(anket.id) }
                 )
             }
 

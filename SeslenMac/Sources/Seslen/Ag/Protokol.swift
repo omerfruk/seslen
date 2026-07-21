@@ -184,6 +184,13 @@ struct AnketGeldiVeri: Decodable, Sendable {
     var bitis: Int
 }
 
+/// Tek bir oy, sahibiyle birlikte.
+struct AnketOycusu: Decodable, Sendable, Equatable {
+    var uyeID: String
+    var adSoyad: String
+    var secenek: Int
+}
+
 /// Anketin o anki **durumu**; her oyda yeniden yayınlanır.
 struct AnketSonucVeri: Decodable, Sendable {
     var anketID: String
@@ -192,6 +199,8 @@ struct AnketSonucVeri: Decodable, Sendable {
     var soru: String
     var secenekler: [String]
     var sayimlar: [Int]
+    /// Kimin neye oy verdiği. Anket gizli oylama değildir.
+    var oylayanlar: [AnketOycusu]
     var katilan: Int
     var beklenen: Int
     /// Oy verilmemişse -1.
@@ -201,7 +210,7 @@ struct AnketSonucVeri: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case anketID, gonderenID, gonderenAd, soru, secenekler
-        case sayimlar, katilan, beklenen, benimOyum, kapandi, bitis
+        case sayimlar, oylayanlar, katilan, beklenen, benimOyum, kapandi, bitis
     }
 
     init(from decoder: any Decoder) throws {
@@ -212,6 +221,7 @@ struct AnketSonucVeri: Decodable, Sendable {
         soru = try k.decode(String.self, forKey: .soru)
         secenekler = try k.decodeIfPresent([String].self, forKey: .secenekler) ?? []
         sayimlar = try k.decodeIfPresent([Int].self, forKey: .sayimlar) ?? []
+        oylayanlar = try k.decodeIfPresent([AnketOycusu].self, forKey: .oylayanlar) ?? []
         katilan = try k.decodeIfPresent(Int.self, forKey: .katilan) ?? 0
         beklenen = try k.decodeIfPresent(Int.self, forKey: .beklenen) ?? 0
         benimOyum = try k.decodeIfPresent(Int.self, forKey: .benimOyum) ?? -1

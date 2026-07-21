@@ -168,6 +168,13 @@ type AnketGeldiVeri struct {
 	Bitis      int64    `json:"bitis"`
 }
 
+// AnketOycusu, tek bir oyu sahibiyle birlikte taşır.
+type AnketOycusu struct {
+	UyeID   string `json:"uyeID"`
+	AdSoyad string `json:"adSoyad"`
+	Secenek int    `json:"secenek"`
+}
+
 // AnketSonucVeri, anketin o anki **durumudur**; her oyda yeniden yayınlanır.
 //
 // BenimOyum alanı yüzünden mesaj kişiye özel hazırlanır — DurumTamVeri.Ben ile
@@ -179,8 +186,12 @@ type AnketSonucVeri struct {
 	Soru       string   `json:"soru"`
 	Secenekler []string `json:"secenekler"`
 	Sayimlar   []int    `json:"sayimlar"`
-	Katilan    int      `json:"katilan"`
-	Beklenen   int      `json:"beklenen"`
+	// Oylayanlar, kimin neye oy verdiğini taşır. Anket gizli oylama değildir:
+	// "kim çay ister" sorusunun cevabı zaten çayı kime götüreceğindir. Arayüz
+	// bunu baştan belli eder ki kimse oyunu gizli sanmasın.
+	Oylayanlar []AnketOycusu `json:"oylayanlar"`
+	Katilan    int           `json:"katilan"`
+	Beklenen   int           `json:"beklenen"`
 	// BenimOyum, oy verilmemişse -1'dir.
 	BenimOyum int   `json:"benimOyum"`
 	Kapandi   bool  `json:"kapandi"`

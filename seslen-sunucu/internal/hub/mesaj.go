@@ -588,10 +588,18 @@ func (h *Hub) anketSonucuHazirla(anket model.Anket, uyeID string) (protokol.Anke
 	}
 
 	sayimlar := make([]int, len(anket.Secenekler))
-	for _, secenek := range oylar {
-		if secenek >= 0 && secenek < len(sayimlar) {
-			sayimlar[secenek]++
+	// Oy sahipleri üye listesi sırasında paketlenir ki sonuç her alıcıda aynı
+	// sırayla görünsün; map üzerinde dönmek sırayı her yayında değiştirirdi.
+	oylayanlar := make([]protokol.AnketOycusu, 0, len(oylar))
+	for _, uye := range uyeler {
+		secenek, verdi := oylar[uye.ID]
+		if !verdi || secenek < 0 || secenek >= len(sayimlar) {
+			continue
 		}
+		sayimlar[secenek]++
+		oylayanlar = append(oylayanlar, protokol.AnketOycusu{
+			UyeID: uye.ID, AdSoyad: uye.AdSoyad, Secenek: secenek,
+		})
 	}
 
 	veri := protokol.AnketSonucVeri{
@@ -601,7 +609,8 @@ func (h *Hub) anketSonucuHazirla(anket model.Anket, uyeID string) (protokol.Anke
 		Soru:       anket.Soru,
 		Secenekler: anket.Secenekler,
 		Sayimlar:   sayimlar,
-		Katilan:    len(oylar),
+		Oylayanlar: oylayanlar,
+		Katilan:    len(oylayanlar),
 		Beklenen:   len(uyeler),
 		BenimOyum:  -1,
 		Kapandi:    anket.Kapandi,

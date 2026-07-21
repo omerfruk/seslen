@@ -177,6 +177,23 @@ mümkün olmamalı. Tacize hiç yükselmez; yanıtsız anket sadece yanıtsız a
 
 **Kişi başına tek açık anket.** Hız sınırının bedava ve anlaşılır hali.
 
+**Anket gizli oylama değildir.** `AnketSonucVeri.Oylayanlar` kimin neye oy
+verdiğini taşır; kart altındaki ok bunu açar. "Kim çay ister"in cevabı zaten
+çayı kime götüreceğindir — sayı tek başına işe yaramaz. Arayüz bunu baştan
+belli etmeli ki kimse oyunu gizli sanmasın. Oy sahipleri üye listesi sırasında
+paketlenir; map üzerinde dönmek sırayı her yayında değiştirirdi.
+
+İsimleri açan düğme kartta **tek** bir yerde, satır başına değil: satıra
+tıklamak oy vermek demek, aynı hareketi iki işe koşmak karışıklık olurdu.
+
+**Bitmiş anketi X ile kullanıcı kaldırır**; kendiliğinden düşmez. Gizlenen
+kimlik `SunucuIstemcisi.gizlenenAnketler` içinde tutulur ki geç gelen bir sonuç
+mesajı kapatılan kartı geri getirmesin. X yalnızca bitmiş ankette görünür:
+açık bir anketi gizlemek kullanıcının oy verme fırsatını da yok ederdi.
+
+Özet (`Anket.ozet`) `acik` olmayan her ankette gösterilir, yalnızca `kapandi`
+bayrağında değil — anketlerin çoğu elle kapatılarak değil süresi dolarak biter.
+
 Sonuç ayrı pencerede değil menü panelinde (`AnketSonucGorunumu`) gösterilir:
 uygulama `.accessory` kipinde olduğu için pencere açmak `NSApp.activate`
 gerektirir ve kullanıcıyı işinden koparır. Kart hem gönderende hem alıcılarda

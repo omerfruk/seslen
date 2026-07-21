@@ -84,6 +84,9 @@ final class SunucuIstemcisi {
 
     // MARK: Özel
 
+    /// Kullanıcının X ile kapattığı anketler; geri gelmemeleri için tutulur.
+    private var gizlenenAnketler: Set<String> = []
+
     private let ayarlar: Ayarlar
     private var token: String?
     private var soket: URLSessionWebSocketTask?
@@ -163,6 +166,7 @@ final class SunucuIstemcisi {
         bekleyen = []
         bekleyenCagri = 0
         anketler = []
+        gizlenenAnketler = []
     }
 
     private struct KimlikYaniti: Decodable {
@@ -322,8 +326,20 @@ final class SunucuIstemcisi {
         yolla(.anketBitir, AnketIDIstek(anketID: anketID))
     }
 
+    /// Bitmiş anketi menüden kaldırır.
+    ///
+    /// Yalnızca bu kullanıcının görünümünü etkiler; anket sunucuda durmaya
+    /// devam eder. Kimlik listede tutulur ki geç gelen bir sonuç mesajı
+    /// kapattığı kartı geri getirmesin.
+    func anketiGizle(_ anketID: String) {
+        gizlenenAnketler.insert(anketID)
+        anketler.removeAll { $0.id == anketID }
+    }
+
     /// Anketi listeye ekler veya günceller; yeni kapandıysa duyurur.
     private func anketiYerlestir(_ anket: Anket) {
+        guard !gizlenenAnketler.contains(anket.id) else { return }
+
         if let sira = anketler.firstIndex(where: { $0.id == anket.id }) {
             let eskisiAcikti = !anketler[sira].kapandi
             anketler[sira] = anket
@@ -332,8 +348,6 @@ final class SunucuIstemcisi {
             anketler.append(anket)
             if anket.kapandi { anketKapandi?(anket) }
         }
-        // Kapanmışlar menü şeridinde birikmesin.
-        anketler.removeAll { $0.kapandi && $0.id != anket.id }
     }
 
     // MARK: - Gelen mesajlar

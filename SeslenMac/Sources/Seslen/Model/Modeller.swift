@@ -302,6 +302,7 @@ struct Anket: Identifiable, Sendable, Equatable {
     var soru: String
     var secenekler: [String]
     var sayimlar: [Int]
+    var oylayanlar: [AnketOycusu]
     var katilan: Int
     var beklenen: Int
     /// Oy verilmemişse nil.
@@ -316,6 +317,7 @@ struct Anket: Identifiable, Sendable, Equatable {
         soru = veri.soru
         secenekler = veri.secenekler
         sayimlar = veri.sayimlar
+        oylayanlar = veri.oylayanlar
         katilan = veri.katilan
         beklenen = veri.beklenen
         benimOyum = veri.benimOyum >= 0 ? veri.benimOyum : nil
@@ -327,6 +329,11 @@ struct Anket: Identifiable, Sendable, Equatable {
     var acik: Bool { !kapandi && Date() < bitis }
 
     var bekleyen: Int { max(beklenen - katilan, 0) }
+
+    /// Bu seçeneğe oy verenlerin adları.
+    func oyVerenler(_ dizin: Int) -> [String] {
+        oylayanlar.filter { $0.secenek == dizin }.map(\.adSoyad)
+    }
 
     /// En çok oyu alan seçeneğin dizini. Berabere ise nil — "kazanan" demek
     /// yanıltıcı olurdu.

@@ -14,6 +14,14 @@ struct AnketSonucGorunumu: View {
     let benimID: String?
     let oyVer: (Int) -> Void
     let bitir: () -> Void
+    let gizle: () -> Void
+
+    /// Oy sahipleri görünüyor mu?
+    ///
+    /// Tek bir aç/kapa var, satır başına değil: satıra tıklamak oy vermek
+    /// demek, aynı hareketi iki işe koşmak karışıklık olurdu. Zaten "kim çay
+    /// ister" sorusunda isteyenlerle istemeyenler birlikte okunur.
+    @State private var oySahipleriGorunsun = false
 
     private var benimAnketim: Bool { anket.gonderenID == benimID }
 
@@ -23,6 +31,9 @@ struct AnketSonucGorunumu: View {
 
             ForEach(anket.secenekler.indices, id: \.self) { dizin in
                 secenekSatiri(dizin)
+                if oySahipleriGorunsun {
+                    oyVerenlerSatiri(dizin)
+                }
             }
 
             altSerit
@@ -60,7 +71,36 @@ struct AnketSonucGorunumu: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.teal)
             }
+
+            // Kapatma yalnızca bitmiş ankette: açık bir anketi gizlemek,
+            // kullanıcının oy verme fırsatını da yok ederdi.
+            if !anket.acik {
+                Button(action: gizle) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(3)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Bu anketi listeden kaldır")
+            }
         }
+    }
+
+    /// Bir seçeneğe oy verenlerin adları.
+    private func oyVerenlerSatiri(_ dizin: Int) -> some View {
+        let adlar = anket.oyVerenler(dizin)
+        return HStack(spacing: 0) {
+            Text(adlar.isEmpty ? "—" : adlar.joined(separator: ", "))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 17)
+        .padding(.top, -3)
     }
 
     private func secenekSatiri(_ dizin: Int) -> some View {
@@ -100,12 +140,28 @@ struct AnketSonucGorunumu: View {
     }
 
     private var altSerit: some View {
-        HStack(spacing: 4) {
-            Text(anket.kapandi
-                ? anket.ozet
-                : "\(anket.katilan)/\(anket.beklenen) yanıtladı")
+        HStack(spacing: 6) {
+            // Özet, anket nasıl bittiğine bakmaksızın gösterilir. Eskiden
+            // yalnızca `kapandi` bayrağına bakılıyordu; süresi dolarak biten
+            // anketlerde — ki çoğu öyle biter — özet hiç görünmüyordu.
+            Text(anket.acik
+                ? "\(anket.katilan)/\(anket.beklenen) yanıtladı"
+                : anket.ozet)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+
+            if anket.katilan > 0 {
+                Button {
+                    oySahipleriGorunsun.toggle()
+                } label: {
+                    Image(systemName: oySahipleriGorunsun ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.teal)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(oySahipleriGorunsun ? "İsimleri gizle" : "Kim ne demiş?")
+            }
 
             Spacer(minLength: 0)
 

@@ -445,6 +445,17 @@ func TestAnketAkisi(t *testing.T) {
 	if sonuc.Sayimlar[0] != 1 || sonuc.Katilan != 1 {
 		t.Errorf("çay 1 oy almalıydı, gelen sayımlar: %v (katılan %d)", sonuc.Sayimlar, sonuc.Katilan)
 	}
+	// Kim neye oy verdiği taşınmalı: "kim çay ister"in cevabı çayı kime
+	// götüreceğindir, salt sayı yetmez.
+	if len(sonuc.Oylayanlar) != 1 {
+		t.Fatalf("1 oy sahibi beklenirdi, gelen: %v", sonuc.Oylayanlar)
+	}
+	if sonuc.Oylayanlar[0].UyeID != k.aliID || sonuc.Oylayanlar[0].Secenek != 0 {
+		t.Errorf("oy sahibi Ali/çay olmalıydı, gelen: %+v", sonuc.Oylayanlar[0])
+	}
+	if sonuc.Oylayanlar[0].AdSoyad != "Ali Veli" {
+		t.Errorf("oy sahibinin adı taşınmalıydı, gelen: %q", sonuc.Oylayanlar[0].AdSoyad)
+	}
 	// Gönderen kendi oyunu vermedi; oyu -1 kalmalı.
 	if sonuc.BenimOyum != -1 {
 		t.Errorf("gönderen oy vermedi, -1 beklenirdi, gelen: %d", sonuc.BenimOyum)
