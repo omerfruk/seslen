@@ -245,6 +245,16 @@ struct AnaGorunum: View {
             Text("Durumum")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+
+            // Meşgul, geri bildirimi olmayan bir kuyuya dönüşmemeli: kullanıcı
+            // kaç kişinin seslendiğini görüp müsaite dönmeye kendi karar versin.
+            if istemci.ben?.durum == .mesgul, istemci.bekleyenCagri > 0 {
+                Text("· \(istemci.bekleyenCagri) çağrı bekliyor")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help("Müsaite dönünce hepsini bir arada görürsün")
+            }
+
             Spacer()
             Picker("", selection: Binding(
                 get: { istemci.ben?.durum == .mesgul ? Durum.mesgul : Durum.musait },

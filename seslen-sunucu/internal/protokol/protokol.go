@@ -14,15 +14,15 @@ type Tip string
 
 // İstemciden sunucuya giden mesaj tipleri.
 const (
-	TipSeslen       Tip = "seslen"        // birine seslen
-	TipHaykir       Tip = "haykir"        // kurumdaki herkese birden seslen
-	TipYanitla      Tip = "yanitla"       // gelen çağrıya yanıt ver
-	TipDurumBildir  Tip = "durum_bildir"  // kendi durumunu değiştir
-	TipUyeGuncelle  Tip = "uye_guncelle"  // (yönetim) üye rolü/yetkisi değiştir
-	TipUyeOnayla    Tip = "uye_onayla"    // (yönetim) bekleyen üyeyi onayla
-	TipUyeSil       Tip = "uye_sil"       // (yönetim) üyeyi kurumdan çıkar
-	TipKodYenile    Tip = "kod_yenile"    // (yönetim) katılım kodunu yenile
-	TipNabiz        Tip = "nabiz"         // bağlantı canlılık kontrolü
+	TipSeslen      Tip = "seslen"       // birine seslen
+	TipHaykir      Tip = "haykir"       // kurumdaki herkese birden seslen
+	TipYanitla     Tip = "yanitla"      // gelen çağrıya yanıt ver
+	TipDurumBildir Tip = "durum_bildir" // kendi durumunu değiştir
+	TipUyeGuncelle Tip = "uye_guncelle" // (yönetim) üye rolü/yetkisi değiştir
+	TipUyeOnayla   Tip = "uye_onayla"   // (yönetim) bekleyen üyeyi onayla
+	TipUyeSil      Tip = "uye_sil"      // (yönetim) üyeyi kurumdan çıkar
+	TipKodYenile   Tip = "kod_yenile"   // (yönetim) katılım kodunu yenile
+	TipNabiz       Tip = "nabiz"        // bağlantı canlılık kontrolü
 )
 
 // Sunucudan istemciye giden mesaj tipleri.
@@ -88,16 +88,22 @@ type DurumTamVeri struct {
 	Ben      model.Uye   `json:"ben"`
 	Uyeler   []model.Uye `json:"uyeler"`
 	Bekleyen []model.Uye `json:"bekleyen"`
+
+	// BekleyenCagri, alıcı meşgulken kuyruğa alınmış çağrı sayısıdır. Yalnızca
+	// "ben" meşgulken doldurulur: meşgul, geri bildirimi olmayan bir kuyuya
+	// dönüşmemeli — kullanıcı kaç kişinin seslendiğini görüp müsaite dönmeye
+	// kendi karar verebilmeli. Başkalarının kuyruk derinliği kimseyi ilgilendirmez.
+	BekleyenCagri int `json:"bekleyenCagri"`
 }
 
 // SeslenmeGeldiVeri, alıcıya iletilen çağrıdır.
 type SeslenmeGeldiVeri struct {
-	CagriID     string       `json:"cagriID"`
-	GonderenID  string       `json:"gonderenID"`
-	GonderenAd  string       `json:"gonderenAd"`
-	Seviye      model.Seviye `json:"seviye"`
-	Not         string       `json:"not"`
-	Gonderildi  int64        `json:"gonderildi"` // unix saniye
+	CagriID    string       `json:"cagriID"`
+	GonderenID string       `json:"gonderenID"`
+	GonderenAd string       `json:"gonderenAd"`
+	Seviye     model.Seviye `json:"seviye"`
+	Not        string       `json:"not"`
+	Gonderildi int64        `json:"gonderildi"` // unix saniye
 	// Yayin, çağrının tek kişiye değil kurumdaki herkese gittiğini söyler.
 	// İstemci uyarıyı buna göre "haykırdı" diye yazar.
 	Yayin bool `json:"yayin"`
@@ -110,7 +116,17 @@ type SeslenmeGeldiVeri struct {
 // "sen yokken 3 seslenme" özeti olarak gösterir.
 type KacirilanlarVeri struct {
 	Cagrilar []SeslenmeGeldiVeri `json:"cagrilar"`
+	// Sebep, çağrıların neden birikmiş olduğunu söyler. İstemci başlığı buna
+	// göre yazar: "Sen yokken 3 seslenme" ile "Meşguldeyken 3 seslenme" farklı
+	// şeylerdir ve ikincisine "yoktun" demek kullanıcıyı yanıltır.
+	Sebep string `json:"sebep"`
 }
+
+// Kaçırılma sebepleri.
+const (
+	SebepCevrimdisi = "cevrimdisi"
+	SebepMesgul     = "mesgul"
+)
 
 // BilgiVeri, reddedilmemiş ama kullanıcıya söylenmesi gereken bir durumu taşır.
 type BilgiVeri struct {
@@ -119,25 +135,25 @@ type BilgiVeri struct {
 
 // YanitGeldiVeri, gönderene dönen cevaptır.
 type YanitGeldiVeri struct {
-	CagriID   string `json:"cagriID"`
-	AliciID   string `json:"aliciID"`
-	AliciAd   string `json:"aliciAd"`
-	Yanit     string `json:"yanit"`
-	YanitTarih int64 `json:"yanitTarih"`
+	CagriID    string `json:"cagriID"`
+	AliciID    string `json:"aliciID"`
+	AliciAd    string `json:"aliciAd"`
+	Yanit      string `json:"yanit"`
+	YanitTarih int64  `json:"yanitTarih"`
 }
 
 // HataVeri, reddedilen bir isteğin sebebini taşır.
 type HataVeri struct {
-	Kod    string `json:"kod"`
-	Mesaj  string `json:"mesaj"`
+	Kod   string `json:"kod"`
+	Mesaj string `json:"mesaj"`
 }
 
 // Hata kodları.
 const (
-	HataYetkisiz    = "yetkisiz"
-	HataBulunamadi  = "bulunamadi"
-	HataGecersiz    = "gecersiz"
-	HataSunucu      = "sunucu"
+	HataYetkisiz   = "yetkisiz"
+	HataBulunamadi = "bulunamadi"
+	HataGecersiz   = "gecersiz"
+	HataSunucu     = "sunucu"
 )
 
 // Paketle, bir gövdeyi zarfa sarıp JSON'a çevirir.

@@ -67,8 +67,12 @@ struct DurumTamVeri: Decodable, Sendable {
     var ben: Uye
     var uyeler: [Uye]
     var bekleyen: [Uye]
+    /// Biz meşgulken kuyruğa alınmış çağrı sayısı. Meşgul, geri bildirimi olmayan
+    /// bir kuyuya dönüşmemeli: kullanıcı kaç kişinin seslendiğini görüp müsaite
+    /// dönmeye kendi karar verebilmeli.
+    var bekleyenCagri: Int
 
-    enum CodingKeys: String, CodingKey { case kurum, ben, uyeler, bekleyen }
+    enum CodingKeys: String, CodingKey { case kurum, ben, uyeler, bekleyen, bekleyenCagri }
 
     init(from decoder: any Decoder) throws {
         let k = try decoder.container(keyedBy: CodingKeys.self)
@@ -76,6 +80,7 @@ struct DurumTamVeri: Decodable, Sendable {
         ben = try k.decode(Uye.self, forKey: .ben)
         uyeler = try k.decodeIfPresent([Uye].self, forKey: .uyeler) ?? []
         bekleyen = try k.decodeIfPresent([Uye].self, forKey: .bekleyen) ?? []
+        bekleyenCagri = try k.decodeIfPresent(Int.self, forKey: .bekleyenCagri) ?? 0
     }
 }
 
@@ -106,16 +111,41 @@ struct SeslenmeGeldiVeri: Decodable, Sendable {
     }
 }
 
-/// Üye çevrimdışıyken biriken çağrılar. Tek mesajda gelir ki bilgisayarını açan
+/// Üyeye ulaştırılamamış çağrılar. Tek mesajda gelir ki bilgisayarını açan
 /// kullanıcının ekranına arka arkaya paneller yağmasın.
 struct KacirilanlarVeri: Decodable, Sendable {
     var cagrilar: [SeslenmeGeldiVeri]
+    /// Çağrıların neden biriktiği. Başlık buna göre yazılır: "Sen yokken" ile
+    /// "Meşguldeyken" farklı şeylerdir ve ikincisine "yoktun" demek yanıltır.
+    var sebep: KacirilmaSebebi
 
-    enum CodingKeys: String, CodingKey { case cagrilar }
+    enum CodingKeys: String, CodingKey { case cagrilar, sebep }
 
     init(from decoder: any Decoder) throws {
         let k = try decoder.container(keyedBy: CodingKeys.self)
         cagrilar = try k.decodeIfPresent([SeslenmeGeldiVeri].self, forKey: .cagrilar) ?? []
+        // Eski sunucu bu alanı hiç göndermez; o sürümde tek sebep çevrimdışılıktı.
+        sebep = try k.decodeIfPresent(KacirilmaSebebi.self, forKey: .sebep) ?? .cevrimdisi
+    }
+}
+
+/// Çağrının alıcıya anında ulaşamama sebebi.
+enum KacirilmaSebebi: String, Decodable, Sendable {
+    case cevrimdisi
+    case mesgul
+
+    var baslik: String {
+        switch self {
+        case .cevrimdisi: "Sen yokken"
+        case .mesgul: "Meşguldeyken"
+        }
+    }
+
+    var rozet: String {
+        switch self {
+        case .cevrimdisi: "KAÇIRILDI"
+        case .mesgul: "MEŞGULDÜN"
+        }
     }
 }
 

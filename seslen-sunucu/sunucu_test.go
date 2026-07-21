@@ -143,6 +143,263 @@ func (c *istemci) beklemeyen(istenmeyen, sinir protokol.Tip, sure time.Duration)
 	}
 }
 
+// kurumOrtami, kurucusu Ömer ve onaylı üyesi Ali olan hazır bir kurumdur.
+type kurumOrtami struct {
+	omer, ali           *istemci
+	omerID, aliID       string
+	omerToken, aliToken string
+}
+
+// ikiKisilikKurum, iki kişilik onaylı bir kurum kurup ikisini de bağlar.
+// Meşgul senaryolarının tamamı bu iskeleti paylaşıyor.
+func ikiKisilikKurum(o *ortam) kurumOrtami {
+	o.t.Helper()
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer",
+	})
+	k := kurumOrtami{
+		omerToken: yanit["token"].(string),
+		omerID:    yanit["ben"].(map[string]any)["id"].(string),
+	}
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Ali Veli",
+	})
+	k.aliToken = yanit["token"].(string)
+	k.aliID = yanit["ben"].(map[string]any)["id"].(string)
+
+	k.omer = o.baglan(k.omerToken, k.omerID)
+	k.omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	k.ali = o.baglan(k.aliToken, k.aliID)
+	k.ali.bekle(protokol.TipDurumTam, 2*time.Second)
+	k.omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: k.aliID})
+	k.ali.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	return k
+}
+
+// mesgulOl, üyeyi meşgule çeker ve değişikliğin işlendiğini doğrular.
+func (c *istemci) mesgulOl() {
+	c.t.Helper()
+	c.yolla(protokol.TipDurumBildir, protokol.DurumBildirIstek{Durum: model.DurumMesgul})
+	c.bekle(protokol.TipDurumTam, 2*time.Second)
+}
+
+// bilgiMetni, gelen bilgi mesajının gövdesini okur.
+func (c *istemci) bilgiMetni(sure time.Duration) string {
+	c.t.Helper()
+	zarf := c.bekle(protokol.TipBilgi, sure)
+	var bilgi protokol.BilgiVeri
+	json.Unmarshal(zarf.Veri, &bilgi)
+	return bilgi.Mesaj
+}
+
+// TestMesgulNormalVeOnemliKuyrugaGirer, meşgul üyeye gönderilen hafif
+// seviyelerin bastırıldığını, kaybolmayıp müsaite dönüldüğünde tek seferde
+// iletildiğini doğrular.
+func TestMesgulNormalVeOnemliKuyrugaGirer(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	for _, seviye := range []model.Seviye{model.SeviyeNormal, model.SeviyeOnemli} {
+		k.omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+			AliciID: k.aliID, Seviye: seviye, Not: "kahve içelim mi",
+		})
+		if mesaj := k.omer.bilgiMetni(2 * time.Second); !strings.Contains(mesaj, "meşgul") {
+			t.Errorf("%q için meşgul bilgisi beklenirdi, gelen: %q", seviye, mesaj)
+		}
+	}
+
+	// Ali'nin ekranında hiçbir şey belirmemeli.
+	k.ali.yolla(protokol.TipNabiz, nil)
+	k.ali.beklemeyen(protokol.TipSeslenmeGeldi, protokol.TipNabizYanit, 2*time.Second)
+
+	// Müsaite dönünce ikisi birden, "meşgul" sebebiyle gelmeli.
+	k.ali.yolla(protokol.TipDurumBildir, protokol.DurumBildirIstek{Durum: model.DurumMusait})
+	zarf := k.ali.bekle(protokol.TipKacirilanlar, 2*time.Second)
+	var kacirilanlar protokol.KacirilanlarVeri
+	json.Unmarshal(zarf.Veri, &kacirilanlar)
+	if len(kacirilanlar.Cagrilar) != 2 {
+		t.Fatalf("2 bekleyen çağrı olmalıydı, gelen: %d", len(kacirilanlar.Cagrilar))
+	}
+	if kacirilanlar.Sebep != protokol.SebepMesgul {
+		t.Errorf("sebep %q olmalıydı, gelen: %q", protokol.SebepMesgul, kacirilanlar.Sebep)
+	}
+
+	// İkinci kez müsait bildirmek aynı çağrıları tekrar getirmemeli.
+	k.ali.yolla(protokol.TipDurumBildir, protokol.DurumBildirIstek{Durum: model.DurumMusait})
+	k.ali.yolla(protokol.TipNabiz, nil)
+	k.ali.beklemeyen(protokol.TipKacirilanlar, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestMesgulAciliSusturmaz, meşgulün acil seviyesini engellemediğini doğrular.
+// Engelleseydi acil seviyesinin anlamı kalmazdı.
+func TestMesgulAciliSusturmaz(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	k.omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: k.aliID, Seviye: model.SeviyeAcil, Not: "sunucu düştü",
+	})
+
+	zarf := k.ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+	var gelen protokol.SeslenmeGeldiVeri
+	json.Unmarshal(zarf.Veri, &gelen)
+	if gelen.Seviye != model.SeviyeAcil {
+		t.Errorf("acil seviye beklenirdi, gelen: %q", gelen.Seviye)
+	}
+
+	// Çağrı ulaştığı için gönderene bekletme bilgisi gitmemeli.
+	k.omer.yolla(protokol.TipNabiz, nil)
+	k.omer.beklemeyen(protokol.TipBilgi, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestMesguldeTacizYukseltmesiCalisir, yükseltmenin bastırma kontrolünden önce
+// yapıldığını kilitler. Sıra tersine çevrilirse üçüncü yanıtsız ACİL tacize
+// yükselmeden meşgulde ölür ve yükseltme mekanizması sessizce işlevsizleşir.
+func TestMesguldeTacizYukseltmesiCalisir(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	beklenen := []model.Seviye{model.SeviyeAcil, model.SeviyeAcil, model.SeviyeTaciz}
+	for sira, seviye := range beklenen {
+		k.omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+			AliciID: k.aliID, Seviye: model.SeviyeAcil, Not: "neredesin",
+		})
+		zarf := k.ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+		var gelen protokol.SeslenmeGeldiVeri
+		json.Unmarshal(zarf.Veri, &gelen)
+		if gelen.Seviye != seviye {
+			t.Errorf("%d. çağrı %q olmalıydı, gelen: %q", sira+1, seviye, gelen.Seviye)
+		}
+	}
+}
+
+// TestMesgulDurumYenidenBaglantidaKorunur, uyku veya ağ kesintisi sonrası meşgul
+// seçiminin kaybolmadığını doğrular. Eskiden hem çıkışta "cevrimdisi" hem
+// girişte "musait" yazılıyor, kullanıcının tercihi sessizce siliniyordu.
+func TestMesgulDurumYenidenBaglantidaKorunur(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	// Kopuşun işlendiğini kuruma giden tam durum yayınından anlıyoruz.
+	k.ali.ws.Close()
+	k.omer.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	ali2 := o.baglan(k.aliToken, k.aliID)
+	zarf := ali2.bekle(protokol.TipDurumTam, 2*time.Second)
+	var durum protokol.DurumTamVeri
+	json.Unmarshal(zarf.Veri, &durum)
+	if durum.Ben.Durum != model.DurumMesgul {
+		t.Errorf("meşgul tercihi korunmalıydı, gelen: %q", durum.Ben.Durum)
+	}
+}
+
+// TestCevrimdisiUyeMesgulSayilmaz, meşgulken kopan üyeye seslenildiğinde
+// gönderene "meşgul" değil "çevrimdışı" dendiğini doğrular. Durum kolonu artık
+// kopuşta sıfırlanmadığı için bu ayrımı çevrimiçilik kontrolü yapıyor.
+func TestCevrimdisiUyeMesgulSayilmaz(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	k.ali.ws.Close()
+	k.omer.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	k.omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: k.aliID, Seviye: model.SeviyeNormal, Not: "müsait misin",
+	})
+	mesaj := k.omer.bilgiMetni(2 * time.Second)
+	if !strings.Contains(mesaj, "çevrimdışı") {
+		t.Errorf("çevrimdışı bilgisi beklenirdi, gelen: %q", mesaj)
+	}
+	if strings.Contains(mesaj, "meşgul") {
+		t.Errorf("çevrimdışı üye için meşgul denmemeliydi, gelen: %q", mesaj)
+	}
+}
+
+// TestMesguldeYayinBastirilir, haykırışın meşgul üyeye ulaşmadığını ve kuyruğa
+// da girmediğini doğrular. Yayın kuyruğa girseydi saatler sonra teslim edilen
+// bir "herkese sesleniyorum" gürültü olurdu.
+func TestMesguldeYayinBastirilir(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	k.omer.yolla(protokol.TipHaykir, protokol.HaykirIstek{Not: "toplantı başlıyor"})
+
+	// Ekipteki tek kişi meşgul: "kimse çevrimiçi değil" demek yalan olurdu,
+	// bu yüzden hata değil bilgi dönmeli.
+	if mesaj := k.omer.bilgiMetni(2 * time.Second); !strings.Contains(mesaj, "meşgul") {
+		t.Errorf("meşgul bilgisi beklenirdi, gelen: %q", mesaj)
+	}
+
+	k.ali.yolla(protokol.TipNabiz, nil)
+	k.ali.beklemeyen(protokol.TipSeslenmeGeldi, protokol.TipNabizYanit, 2*time.Second)
+
+	// Müsaite dönünce de gelmemeli: yayın teslim edilmiş sayılır.
+	k.ali.yolla(protokol.TipDurumBildir, protokol.DurumBildirIstek{Durum: model.DurumMusait})
+	k.ali.yolla(protokol.TipNabiz, nil)
+	k.ali.beklemeyen(protokol.TipKacirilanlar, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestMesgulTekrarBildirilirseKuyrukBosalmaz, kuyruğun yalnızca müsaite
+// dönüldüğünde açıldığını doğrular.
+func TestMesgulTekrarBildirilirseKuyrukBosalmaz(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	k.ali.mesgulOl()
+
+	k.omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: k.aliID, Seviye: model.SeviyeOnemli, Not: "bekliyorum",
+	})
+	k.omer.bilgiMetni(2 * time.Second)
+
+	k.ali.yolla(protokol.TipDurumBildir, protokol.DurumBildirIstek{Durum: model.DurumMesgul})
+	k.ali.yolla(protokol.TipNabiz, nil)
+	k.ali.beklemeyen(protokol.TipKacirilanlar, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestBaglantidaDurumTazeleme, bağlanışta yalnızca "cevrimdisi" ve bayat
+// meşgul değerlerinin müsaite döndüğünü doğrular.
+func TestBaglantidaDurumTazeleme(t *testing.T) {
+	depo, err := store.Ac(filepath.Join(t.TempDir(), "durum.db"))
+	if err != nil {
+		t.Fatalf("veritabanı açılamadı: %v", err)
+	}
+	defer depo.Kapat()
+
+	_, kurucu, _, err := depo.KurumOlustur("HAY Teknoloji", "Ömer")
+	if err != nil {
+		t.Fatalf("kurum kurulamadı: %v", err)
+	}
+
+	for _, d := range []struct {
+		yazilan, beklenen model.Durum
+	}{
+		{model.DurumCevrimdisi, model.DurumMusait},
+		{model.DurumMesgul, model.DurumMesgul},
+		{model.DurumMusait, model.DurumMusait},
+	} {
+		if err := depo.DurumGuncelle(kurucu.ID, d.yazilan); err != nil {
+			t.Fatalf("durum yazılamadı: %v", err)
+		}
+		gelen, err := depo.BaglantidaDurumTazele(kurucu.ID)
+		if err != nil {
+			t.Fatalf("durum tazelenemedi: %v", err)
+		}
+		if gelen != d.beklenen {
+			t.Errorf("%q için %q beklenirdi, gelen: %q", d.yazilan, d.beklenen, gelen)
+		}
+	}
+}
+
 // TestCevrimdisiTeslimKuyrugu, üye çevrimdışıyken gelen seslenmenin kaybolmayıp
 // üye bağlanır bağlanmaz iletildiğini ve ikinci kez iletilmediğini doğrular.
 func TestCevrimdisiTeslimKuyrugu(t *testing.T) {

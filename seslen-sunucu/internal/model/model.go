@@ -35,6 +35,16 @@ func (s Seviye) Kapsar(diger Seviye) bool {
 	return siralama[s] >= siralama[diger]
 }
 
+// MesguldeBekler, alıcı meşgulken bu seviyenin bekletilip anında iletilmeyeceğini
+// söyler.
+//
+// Acil ve tacizin geçmesi kasıtlıdır: meşgul acili susturabilseydi acil
+// seviyesinin anlamı kalmazdı. Bu, istemcideki `Ayarlar.acilEzsin` mantığının
+// sunucu tarafındaki karşılığıdır.
+func (s Seviye) MesguldeBekler() bool {
+	return siralama[s] < siralama[SeviyeAcil]
+}
+
 // Rol, üyenin kurum içindeki konumudur.
 type Rol string
 
@@ -50,11 +60,18 @@ func (r Rol) YonetimYetkisi() bool {
 }
 
 // Durum, üyenin o anki müsaitlik bilgisidir.
+//
+// Veritabanındaki kolon yalnızca kullanıcının *tercihini* tutar: musait veya
+// mesgul. Çevrimiçilik ayrı bir eksendir ve hub'ın canlı bağlantı kaydından
+// türetilir (`KurumaYayinla`). Eskiden bağlantı kopunca kolona "cevrimdisi"
+// yazılıyordu; bu, varlığın tercihi ezmesi demekti ve kullanıcının meşgul
+// seçimi her kopuşta sessizce siliniyordu.
 type Durum string
 
 const (
-	DurumMusait     Durum = "musait"
-	DurumMesgul     Durum = "mesgul"
+	DurumMusait Durum = "musait"
+	DurumMesgul Durum = "mesgul"
+	// DurumCevrimdisi yalnızca tel üstünde geçerlidir; veritabanına yazılmaz.
 	DurumCevrimdisi Durum = "cevrimdisi"
 )
 

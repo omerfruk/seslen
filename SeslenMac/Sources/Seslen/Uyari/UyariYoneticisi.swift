@@ -97,13 +97,13 @@ final class UyariYoneticisi {
         }
     }
 
-    /// Biz çevrimdışıyken birikmiş çağrıları gösterir.
+    /// Bize ulaştırılamamış çağrıları toplu olarak gösterir.
     ///
     /// Bunlar `isle` üzerinden geçmez: her biri kendi panelini açsaydı,
     /// bilgisayarını açan kullanıcı arka arkaya beş tam ekran pencere kapatmak
     /// zorunda kalırdı. Geçmişte kalmış bir çağrı ekranı kesmemeli; tek bir
     /// özet yeterlidir. Rozet ve liste yine dolar, kimse gözden kaçmaz.
-    func kacirilanlariIsle(_ seslenmeler: [Seslenme]) {
+    func kacirilanlariIsle(_ seslenmeler: [Seslenme], sebep: KacirilmaSebebi) {
         let gorunecekler = seslenmeler.filter {
             !ayarlar.etkinBicim(gonderenID: $0.gonderenID, seviye: $0.seviye).sessiz
         }
@@ -119,13 +119,13 @@ final class UyariYoneticisi {
 
         balon.goster(BalonOgesi(
             id: "kacirilanlar-\(gorunecekler.map(\.id).joined())",
-            baslik: "Sen yokken \(gorunecekler.count) seslenme",
+            baslik: "\(sebep.baslik) \(gorunecekler.count) seslenme",
             altSatir: benzersiz.joined(separator: ", "),
             simge: "clock.arrow.circlepath",
             renk: gorunecekler.map(\.seviye).max()?.renk ?? .blue,
-            rozet: "KAÇIRILDI"
+            rozet: sebep.rozet
         ))
-        kacirilanBildirimi(adet: gorunecekler.count, adlar: benzersiz)
+        kacirilanBildirimi(adet: gorunecekler.count, adlar: benzersiz, sebep: sebep)
     }
 
     /// Gönderdiğimiz bir çağrıya dönen yanıtı gösterir.
@@ -300,11 +300,11 @@ final class UyariYoneticisi {
     }
 
     /// Kaçırılan çağrılar için tek bir özet bildirimi yollar.
-    private func kacirilanBildirimi(adet: Int, adlar: [String]) {
+    private func kacirilanBildirimi(adet: Int, adlar: [String], sebep: KacirilmaSebebi) {
         guard Bundle.main.bundleIdentifier != nil, bildirimIzni == .verildi else { return }
 
         let icerik = UNMutableNotificationContent()
-        icerik.title = "Sen yokken \(adet) seslenme"
+        icerik.title = "\(sebep.baslik) \(adet) seslenme"
         icerik.body = adlar.joined(separator: ", ")
         // Geçmişte kalmış çağrı acil değildir; kullanıcı ona kendi zamanında bakar.
         icerik.interruptionLevel = .passive

@@ -18,9 +18,9 @@ import (
 
 // Yaygın hatalar.
 var (
-	ErrBulunamadi = errors.New("kayıt bulunamadı")
+	ErrBulunamadi  = errors.New("kayıt bulunamadı")
 	ErrKodGecersiz = errors.New("katılım kodu geçersiz")
-	ErrIsimDolu   = errors.New("bu isimde bir üye zaten var")
+	ErrIsimDolu    = errors.New("bu isimde bir üye zaten var")
 )
 
 // Store, veritabanı bağlantısını sarar.
@@ -184,13 +184,13 @@ func (s *Store) KurumOlustur(kurumAd, kurucuAd string) (model.Kurum, model.Uye, 
 		Olusturuldu: simdi,
 	}
 	kurucu := model.Uye{
-		ID:          yeniID(),
-		KurumID:     kurum.ID,
-		AdSoyad:     strings.TrimSpace(kurucuAd),
-		Rol:         model.RolKurucu,
+		ID:      yeniID(),
+		KurumID: kurum.ID,
+		AdSoyad: strings.TrimSpace(kurucuAd),
+		Rol:     model.RolKurucu,
 		// Kurucu en üst seviyeyi kendinde tutar; taciz yetkisini kimin
 		// kullanacağına kurumu kuran kişi karar verir.
-		MaxSeviye: model.SeviyeTaciz,
+		MaxSeviye:   model.SeviyeTaciz,
 		Onayli:      true,
 		Durum:       model.DurumCevrimdisi,
 		SonGorulme:  simdi,
@@ -410,6 +410,51 @@ func (s *Store) DurumGuncelle(uyeID string, durum model.Durum) error {
 	return err
 }
 
+// mesgulOmru, meşgul seçiminin ne kadar sonra kendiliğinden düşeceğidir.
+//
+// Durum kolonu artık bağlantı kopunca sıfırlanmadığı için meşgul kalıcıdır:
+// Cuma akşamı meşgul seçip kapağı kapatan biri Pazartesi hâlâ meşgul bağlanır
+// ve haberi olmadan çağrı yutar. Bir mesai günü sınırı bunu engeller.
+const mesgulOmru = 8 * time.Hour
+
+// BaglantidaDurumTazele, üye bağlandığında durum kolonunu düzeltir ve geçerli
+// durumu döner.
+//
+// Koşulsuz "musait" yazılmaz — yazılsaydı uykudan uyanan kullanıcının meşgul
+// seçimi silinirdi. Yalnızca iki halde müsaite dönülür: eski sürümlerden kalan
+// "cevrimdisi" değeri ve mesgulOmru'nu aşmış bayat bir meşgul.
+func (s *Store) BaglantidaDurumTazele(uyeID string) (model.Durum, error) {
+	simdi := time.Now()
+	_, err := s.db.Exec(
+		`UPDATE uyeler
+		 SET durum = CASE WHEN durum = ? OR son_gorulme < ? THEN ? ELSE durum END,
+		     son_gorulme = ?
+		 WHERE id = ?`,
+		model.DurumCevrimdisi, simdi.Add(-mesgulOmru).Unix(), model.DurumMusait,
+		simdi.Unix(), uyeID,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	var durum model.Durum
+	err = s.db.QueryRow(`SELECT durum FROM uyeler WHERE id = ?`, uyeID).Scan(&durum)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrBulunamadi
+	}
+	return durum, err
+}
+
+// SonGorulmeYaz, yalnızca son görülme zamanını tazeler; durum tercihine dokunmaz.
+// Çıkışta kullanılır: eskiden buraya "cevrimdisi" yazılıyordu ve bu, kullanıcının
+// meşgul seçimini her bağlantı kopuşunda siliyordu.
+func (s *Store) SonGorulmeYaz(uyeID string) error {
+	_, err := s.db.Exec(
+		`UPDATE uyeler SET son_gorulme = ? WHERE id = ?`, time.Now().Unix(), uyeID,
+	)
+	return err
+}
+
 // --- Çağrı işlemleri ---
 
 // CagriKaydet, gönderilen seslenmeyi kalıcı hale getirir.
@@ -498,6 +543,21 @@ func (s *Store) TeslimEdilmemisCagrilar(aliciID string) ([]model.Cagri, error) {
 		liste = append(liste, c)
 	}
 	return liste, satirlar.Err()
+}
+
+// BekleyenCagriSayisi, üyenin kuyruğunda bekleyen çağrı adedini verir.
+//
+// WHERE koşulu TeslimEdilmemisCagrilar ile birebir aynı olmalıdır; ayrışırsa
+// kullanıcıya gösterilen sayaç, sonradan teslim edilen listeyle uyuşmaz.
+func (s *Store) BekleyenCagriSayisi(aliciID string) (int, error) {
+	esik := time.Now().Add(-teslimGecmisSiniri).Unix()
+	var adet int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM cagrilar
+		 WHERE alici_id = ? AND teslim_tarih = 0 AND yanit = '' AND gonderildi >= ?`,
+		aliciID, esik,
+	).Scan(&adet)
+	return adet, err
 }
 
 // TeslimIsaretle, verilen çağrıları iletilmiş sayar; bir daha kuyruğa girmezler.

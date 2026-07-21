@@ -50,6 +50,8 @@ final class SunucuIstemcisi {
     private(set) var ben: Uye?
     private(set) var uyeler: [Uye] = []
     private(set) var bekleyen: [Uye] = []
+    /// Biz meşgulken kuyruğa alınmış çağrı sayısı; müsaite dönünce sıfırlanır.
+    private(set) var bekleyenCagri: Int = 0
     /// Kullanıcıya gösterilecek son hata mesajı (menüde kısa süre görünür).
     var sonHata: String?
     /// Hata olmayan ama kullanıcının bilmesi gereken son durum (menüde görünür).
@@ -67,8 +69,9 @@ final class SunucuIstemcisi {
 
     /// Yeni bir seslenme geldiğinde çağrılır.
     var seslenmeGeldi: ((Seslenme) -> Void)?
-    /// Biz çevrimdışıyken birikmiş çağrılar bağlanınca toplu olarak gelir.
-    var kacirilanlarGeldi: (([Seslenme]) -> Void)?
+    /// Bize ulaştırılamamış çağrılar toplu olarak geldiğinde çağrılır: biz
+    /// çevrimdışıyken bağlanınca, meşgulken müsaite dönünce.
+    var kacirilanlarGeldi: (([Seslenme], KacirilmaSebebi) -> Void)?
     /// Gönderdiğimiz bir çağrıya yanıt geldiğinde çağrılır.
     var yanitGeldi: ((YanitGeldiVeri) -> Void)?
 
@@ -151,6 +154,7 @@ final class SunucuIstemcisi {
         ben = nil
         uyeler = []
         bekleyen = []
+        bekleyenCagri = 0
     }
 
     private struct KimlikYaniti: Decodable {
@@ -305,6 +309,7 @@ final class SunucuIstemcisi {
             ben = durum.ben
             uyeler = durum.uyeler
             bekleyen = durum.bekleyen
+            bekleyenCagri = durum.bekleyenCagri
 
         case .seslenmeGeldi:
             guard let gelen = try? zarf.veri(SeslenmeGeldiVeri.self) else { return }
@@ -313,7 +318,7 @@ final class SunucuIstemcisi {
         case .kacirilanlar:
             guard let gelen = try? zarf.veri(KacirilanlarVeri.self), !gelen.cagrilar.isEmpty
             else { return }
-            kacirilanlarGeldi?(gelen.cagrilar.map(seslenmeyeCevir))
+            kacirilanlarGeldi?(gelen.cagrilar.map(seslenmeyeCevir), gelen.sebep)
 
         case .yanitGeldi:
             guard let gelen = try? zarf.veri(YanitGeldiVeri.self) else { return }

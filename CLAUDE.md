@@ -85,6 +85,61 @@ kullanıcı seslenmenin kaybolduğunu sanıp tekrar tekrar denerdi.
 Yalnızca onaylı listede arayıp bulamayınca oturumu kapatmak, katılan hiç
 kimsenin "onay bekleniyor" ekranını görememesine yol açar.
 
+**6. `uyeler.durum` kolonu yalnızca tercihi tutar.**
+Kolonda `musait` veya `mesgul` yazar; çevrimiçilik ayrı bir eksendir ve
+`KurumaYayinla` tarafından hub'ın canlı kaydından türetilir. Eskiden `cikar`
+her kopuşta `cevrimdisi`, `Baglat` her bağlanışta `musait` yazıyordu — yani
+varlık, tercihi eziyordu ve kullanıcının meşgul seçimi uykudan uyandığında
+sessizce siliniyordu. `cikar` artık yalnızca `SonGorulmeYaz` çağırır.
+`DurumCevrimdisi` tel üstünde hâlâ geçerli bir değerdir, veritabanında değil.
+
+## Meşgul durumu
+
+Meşgul kozmetik değildir; alıcıya ulaşacak çağrıları süzer.
+
+- **normal + önemli** bastırılır: alıcıya hiçbir şey gitmez, çağrı
+  `teslim_tarih = 0` ile kuyrukta bekler, kişi müsaite döndüğü anda
+  `durumIsle` içinden `kacirilanlariYolla` ile tek mesajda iletilir.
+- **acil geçer.** Geçmeseydi meşgul, acil seviyesini anlamsız kılardı — bu,
+  istemcideki `Ayarlar.acilEzsin` mantığının sunucu tarafındaki karşılığıdır.
+- **taciz her koşulda geçer.**
+- Gönderene hata değil **bilgi** döner ("… şu anda meşgul — müsait olduğunda
+  görecek"), çevrimdışı vakasındaki gerekçenin aynısıyla.
+
+**Karar sunucuda verilir** — ve gerekçesi kural 2 değil **kural 4**'tür.
+İstemci bastırsaydı çağrı `UyeyeGonder` başarılı olduğu an teslim işaretlenmiş
+olurdu; alıcı uygulaması sonradan "gösterme" dediğinde çağrı kaybolurdu.
+Kuyruğa alma sunucu işi olduğundan bastırma da onunla aynı yerde olmak zorunda.
+`Ayarlar.etkinBicim` bu yüzden hiç değişmedi: o "gelen çağrıyı nasıl
+gösteririm" sorusunu yanıtlar, "çağrı gelsin mi" ayrı bir katmandır.
+
+**Yükseltme bastırmadan önce çalışır.** `seviyeyiYukselt`, meşgul kontrolünden
+önce çağrılır; yoksa üçüncü yanıtsız ACİL tacize yükselmeden meşgulde ölür ve
+yükseltme mekanizması sessizce işlevsizleşir.
+
+**Yayın da meşgule saygı duyar.** Haykırış meşgul üyeye iletilmez ve kuyruğa
+girmez (kural 4'ün yayın istisnası burada da geçerli). Meşgulün tanımı "beni
+kesme"yse, ekipteki herkesin tek tıkla o kalkanı delebilmesi tutarsız olurdu.
+Herkes meşgulse gönderene `HataBulunamadi` değil `TipBilgi` döner — "kimse
+çevrimiçi değil" demek o durumda yalan olurdu.
+
+**Meşgul 8 saat sonra kendiliğinden düşer** (`store.mesgulOmru`). Kolon artık
+kopuşta sıfırlanmadığı için meşgul kalıcı: Cuma akşamı meşgul seçip kapağı
+kapatan biri Pazartesi hâlâ meşgul bağlanır ve haberi olmadan çağrı yutardı.
+`BaglantidaDurumTazele` bunu ve eski sürümlerden kalan `cevrimdisi` değerini
+tek SQL ifadesinde düzeltir.
+
+**`Hub.teslimMu` silinmemeli.** "Çağrı yaz + teslim kararı ver" ile "durumu
+değiştir + kuyruğu boşalt" bölümlerini ayırır. Olmasaydı şu sıra mümkündü:
+`seslenIsle` alıcıyı meşgul görür, tam o anda alıcı müsaite geçip kuyruğunu
+boşaltır, ardından çağrı `teslim_tarih = 0` ile yazılır — ve saatlerce kuyrukta
+unutulur. `h.mu`'dan bilerek ayrıdır: o kilit altında veritabanı işi yapmak
+`KurumaYayinla` ve `UyeyeGonder`'i bloklar.
+
+Meşgul bağlanan üyenin kuyruğu `Baglat`'ta **boşaltılmaz**; meşgulün anlamı
+tam olarak budur. Kullanıcı biriken sayıyı `DurumTamVeri.BekleyenCagri` ile
+menüde görür — meşgul, geri bildirimi olmayan bir kuyuya dönüşmemeli.
+
 ## Uyarı mantığı
 
 Karar tek yerde: `Ayarlar.etkinBicim(gonderenID:seviye:)`.

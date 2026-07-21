@@ -26,8 +26,8 @@ struct SeslenApp: App {
         istemci.yanitGeldi = { [weak uyari] veri in
             uyari?.yanitiGoster(veri)
         }
-        istemci.kacirilanlarGeldi = { [weak uyari] seslenmeler in
-            uyari?.kacirilanlariIsle(seslenmeler)
+        istemci.kacirilanlarGeldi = { [weak uyari] seslenmeler, sebep in
+            uyari?.kacirilanlariIsle(seslenmeler, sebep: sebep)
         }
 
         _ayarlar = State(initialValue: ayarlar)

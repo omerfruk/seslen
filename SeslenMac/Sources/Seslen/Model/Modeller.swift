@@ -49,6 +49,11 @@ enum Seviye: String, Codable, CaseIterable, Sendable, Comparable {
         }
     }
 
+    /// Alıcı meşgulken bu seviye bekletilir mi? Sunucudaki `Seviye.MesguldeBekler`
+    /// ile aynı kuralı taşır — burada yalnızca arayüzü doğru yazmak için var,
+    /// yaptırım sunucudadır.
+    var mesguldeBekler: Bool { self < .acil }
+
     /// Seviyelerin birbirine göre ağırlığı; yetki karşılaştırması için.
     private var agirlik: Int {
         switch self {

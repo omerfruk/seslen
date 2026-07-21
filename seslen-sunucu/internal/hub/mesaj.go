@@ -108,6 +108,9 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 		return
 	}
 
+	// Yükseltme, meşgul bastırmasından önce yapılır: meşgul birine gönderilen ve
+	// tacize yükselmiş bir ACİL geçmelidir. Sıra tersine çevrilirse taciz
+	// yükseltmesi meşgulde ölür.
 	cagri := model.Cagri{
 		ID:         store.YeniCagriID(),
 		KurumID:    gonderen.KurumID,
@@ -116,11 +119,6 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 		Seviye:     h.seviyeyiYukselt(gonderen.ID, alici.ID, istek.Seviye),
 		Not:        notKisalt(istek.Not),
 		Gonderildi: time.Now(),
-	}
-	if err := h.depo.CagriKaydet(cagri); err != nil {
-		h.kayit.Error("çağrı kaydedilemedi", "hata", err)
-		b.hata(protokol.HataSunucu, "çağrı kaydedilemedi")
-		return
 	}
 
 	mesaj, err := protokol.Paketle(protokol.TipSeslenmeGeldi, protokol.SeslenmeGeldiVeri{
@@ -136,21 +134,71 @@ func (h *Hub) seslenIsle(b *Baglanti, ham json.RawMessage) {
 		return
 	}
 
-	if h.UyeyeGonder(alici.ID, mesaj) {
-		if err := h.depo.TeslimIsaretle([]string{cagri.ID}); err != nil {
-			h.kayit.Error("teslim işaretlenemedi", "cagri", cagri.ID, "hata", err)
-		}
-	} else {
-		// Alıcı çevrimdışı. Çağrı kuyrukta kalır ve alıcı bağlandığı anda
-		// iletilir; bu yüzden gönderene hata değil bilgi dönüyoruz. Eskiden
-		// hata dönerdi ve kullanıcı seslenmenin kaybolduğunu sanıp tekrar
-		// tekrar denerdi.
+	sonuc, err := h.cagriyiTeslimEt(cagri, mesaj)
+	if err != nil {
+		h.kayit.Error("çağrı kaydedilemedi", "hata", err)
+		b.hata(protokol.HataSunucu, "çağrı kaydedilemedi")
+		return
+	}
+
+	// Her iki halde de gönderene hata değil bilgi dönüyoruz: çağrı kaybolmadı,
+	// yalnızca gecikecek. Hata dönseydi kullanıcı seslenmenin yere düştüğünü
+	// sanıp tekrar tekrar denerdi.
+	switch sonuc {
+	case teslimCevrimdisi:
 		b.Yolla(protokol.BilgiPaketle(alici.AdSoyad + " şu anda çevrimdışı — bilgisayarını açtığında görecek"))
+	case teslimMesgul:
+		b.Yolla(protokol.BilgiPaketle(alici.AdSoyad + " şu anda meşgul — müsait olduğunda görecek"))
 	}
 
 	h.kayit.Info("seslenme kaydedildi",
 		"gonderen", gonderen.AdSoyad, "alici", alici.AdSoyad, "seviye", cagri.Seviye,
-		"cevrimici", h.Cevrimici(alici.ID))
+		"teslim", sonuc)
+}
+
+// teslimSonucu, çağrının alıcıya ulaşıp ulaşmadığını, ulaşmadıysa sebebini söyler.
+type teslimSonucu string
+
+const (
+	// teslimEdilmedi yalnızca hata dönüşlerinde kullanılır; çağıran önce err'e bakar.
+	teslimEdilmedi   teslimSonucu = ""
+	teslimEdildi     teslimSonucu = "edildi"
+	teslimCevrimdisi teslimSonucu = "cevrimdisi"
+	teslimMesgul     teslimSonucu = "mesgul"
+)
+
+// cagriyiTeslimEt, çağrıyı kaydeder ve alıcıya ulaştırmayı dener.
+//
+// Alıcının durumunu okuma, çağrıyı yazma ve teslim kararını verme işleri tek
+// kilit altında yürür; gerekçesi Hub.teslimMu'nun yanında yazılı.
+func (h *Hub) cagriyiTeslimEt(cagri model.Cagri, mesaj []byte) (teslimSonucu, error) {
+	h.teslimMu.Lock()
+	defer h.teslimMu.Unlock()
+
+	if err := h.depo.CagriKaydet(cagri); err != nil {
+		return teslimEdilmedi, err
+	}
+
+	// Çevrimiçilik önce sorulur: alıcı çevrimdışıyken durum kolonu "mesgul"
+	// kalabiliyor, ve o halde gönderene "meşgul" değil "çevrimdışı" denmeli.
+	if !h.Cevrimici(cagri.AliciID) {
+		return teslimCevrimdisi, nil
+	}
+
+	alici, err := h.depo.UyeGetir(cagri.AliciID)
+	if err == nil && alici.Durum == model.DurumMesgul && cagri.Seviye.MesguldeBekler() {
+		// Alıcıya hiçbir şey gönderilmez. Çağrı teslim_tarih = 0 ile kuyrukta
+		// kalır ve alıcı müsaite döndüğü anda kacirilanlariYolla ile iletilir.
+		return teslimMesgul, nil
+	}
+
+	if !h.UyeyeGonder(cagri.AliciID, mesaj) {
+		return teslimCevrimdisi, nil
+	}
+	if err := h.depo.TeslimIsaretle([]string{cagri.ID}); err != nil {
+		h.kayit.Error("teslim işaretlenemedi", "cagri", cagri.ID, "hata", err)
+	}
+	return teslimEdildi, nil
 }
 
 // seviyeyiYukselt, yanıtsız kalan ACİL çağrılar birikmişse seslenmeyi taciz
@@ -209,6 +257,7 @@ func (h *Hub) haykirIsle(b *Baglanti, ham json.RawMessage) {
 	not := notKisalt(istek.Not)
 	simdi := time.Now()
 	ulasan := 0
+	mesgulSayisi := 0
 	// Yayın kuyruğa girmez: saatler sonra teslim edilen bir "herkese
 	// sesleniyorum" bilgi değil gürültüdür. Bu yüzden yayın çağrıları
 	// ulaşsın ulaşmasın teslim edilmiş sayılır.
@@ -245,9 +294,15 @@ func (h *Hub) haykirIsle(b *Baglanti, ham json.RawMessage) {
 		if err != nil {
 			continue
 		}
+		switch {
+		// Meşgul üyeye yayın iletilmez. Meşgulün tanımı "beni kesme"yse,
+		// ekipteki herkesin tek tıkla o kalkanı delebilmesi tutarsız olurdu.
+		// Kuyruğa da girmez: gecikmiş yayın gürültüdür (yukarıdaki not).
+		case alici.Durum == model.DurumMesgul && h.Cevrimici(alici.ID):
+			mesgulSayisi++
 		// Çevrimdışı üyeye ulaşamamak yayını başarısız yapmaz; tek kişilik
 		// seslenmeden farkı bu.
-		if h.UyeyeGonder(alici.ID, mesaj) {
+		case h.UyeyeGonder(alici.ID, mesaj):
 			ulasan++
 		}
 		yayilanlar = append(yayilanlar, cagri.ID)
@@ -258,11 +313,18 @@ func (h *Hub) haykirIsle(b *Baglanti, ham json.RawMessage) {
 	}
 
 	if ulasan == 0 {
+		// Herkes çevrimiçi ama meşgulse "kimse yok" demek yalan olur; ayrıca
+		// bu bir hata değil, kullanıcının bilmesi gereken bir durum.
+		if mesgulSayisi > 0 {
+			b.Yolla(protokol.BilgiPaketle("Ekipteki herkes şu anda meşgul — haykırış iletilmedi"))
+			return
+		}
 		b.hata(protokol.HataBulunamadi, "şu anda çevrimiçi kimse yok")
 		return
 	}
 
-	h.kayit.Info("yayın iletildi", "gonderen", gonderen.AdSoyad, "ulasan", ulasan)
+	h.kayit.Info("yayın iletildi",
+		"gonderen", gonderen.AdSoyad, "ulasan", ulasan, "mesgul", mesgulSayisi)
 }
 
 // yanitlaIsle, alıcının çağrıya verdiği cevabı gönderene ulaştırır.
@@ -324,10 +386,21 @@ func (h *Hub) durumIsle(b *Baglanti, ham json.RawMessage) {
 		b.hata(protokol.HataGecersiz, "geçersiz durum")
 		return
 	}
+	h.teslimMu.Lock()
 	if err := h.depo.DurumGuncelle(b.uyeID, istek.Durum); err != nil {
+		h.teslimMu.Unlock()
 		b.hata(protokol.HataSunucu, "durum yazılamadı")
 		return
 	}
+	// Müsaite dönen üyenin meşgulken bekletilen çağrıları hemen iletilir.
+	// Kilit, tam bu sırada yazılan bir çağrının kuyrukta unutulmasını önler.
+	if istek.Durum == model.DurumMusait {
+		h.kacirilanlariYolla(b, protokol.SebepMesgul)
+	}
+	h.teslimMu.Unlock()
+
+	// Yayın kilidin dışında: h.mu alıp N üyeye mesaj yolluyor, kilit altında
+	// tutmanın kazancı yok.
 	h.KurumaYayinla(b.kurumID)
 }
 

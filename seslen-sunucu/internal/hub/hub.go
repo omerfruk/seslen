@@ -35,10 +35,22 @@ type Baglanti struct {
 // Hub, tüm bağlantıların merkezi kaydıdır.
 type Hub struct {
 	mu          sync.RWMutex
-	baglantilar map[string]*Baglanti          // üyeID -> bağlantı
+	baglantilar map[string]*Baglanti           // üyeID -> bağlantı
 	kurumUyesi  map[string]map[string]struct{} // kurumID -> üyeID kümesi
-	depo        *store.Store
-	kayit       *slog.Logger
+
+	// teslimMu, "çağrı yaz + teslim kararı ver" ile "durumu değiştir + kuyruğu
+	// boşalt" bölümlerini birbirinden ayırır. Kilit olmasaydı şu sıra mümkündü:
+	// seslenIsle alıcıyı meşgul görür, tam o anda alıcı müsaite geçip kuyruğunu
+	// boşaltır, ardından çağrı teslim_tarih = 0 ile yazılır — ve bir sonraki
+	// bağlantıya kadar, yani saatlerce, kuyrukta unutulur.
+	//
+	// Bilerek mu'dan ayrı: mu altında veritabanı işi yapmak KurumaYayinla ve
+	// UyeyeGonder'i bloklar. mu tutulurken teslimMu hiç alınmadığı için kilit
+	// sırası sorunu doğmaz.
+	teslimMu sync.Mutex
+
+	depo  *store.Store
+	kayit *slog.Logger
 }
 
 // Yeni, boş bir hub oluşturur.
@@ -64,25 +76,37 @@ func (h *Hub) Baglat(ws *websocket.Conn, uye model.Uye) {
 	h.ekle(b)
 	defer h.cikar(b)
 
-	// Bağlanan üye varsayılan olarak müsait sayılır.
-	if err := h.depo.DurumGuncelle(uye.ID, model.DurumMusait); err != nil {
-		h.kayit.Error("durum yazılamadı", "uye", uye.ID, "hata", err)
+	// Durum tercihi korunur; yalnızca bayat veya "cevrimdisi" değerler müsaite döner.
+	h.teslimMu.Lock()
+	durum, err := h.depo.BaglantidaDurumTazele(uye.ID)
+	h.teslimMu.Unlock()
+	if err != nil {
+		h.kayit.Error("durum tazelenemedi", "uye", uye.ID, "hata", err)
+		durum = model.DurumMusait
 	}
 	h.KurumaYayinla(uye.KurumID)
 
-	// Tam durum gittikten sonra: üye çevrimdışıyken biriken çağrılar.
-	h.kacirilanlariYolla(b)
+	// Tam durum gittikten sonra: üye çevrimdışıyken biriken çağrılar. Meşgul
+	// bağlanan üyenin kuyruğu boşaltılmaz — meşgulün anlamı tam olarak budur;
+	// çağrılar müsaite dönüldüğünde durumIsle tarafından iletilir.
+	if durum != model.DurumMesgul {
+		h.teslimMu.Lock()
+		h.kacirilanlariYolla(b, protokol.SebepCevrimdisi)
+		h.teslimMu.Unlock()
+	}
 
 	go b.yazmaDongusu()
 	b.okumaDongusu()
 }
 
-// kacirilanlariYolla, üye bağlı değilken gelen çağrıları tek mesajda iletir.
+// kacirilanlariYolla, üyeye ulaştırılamamış çağrıları tek mesajda iletir.
 //
-// Çağrılar gönderildikleri anda veritabanına yazılır ama alıcı çevrimdışıysa
-// hiçbir yere ulaşmaz. Teslim burada tamamlanır: bilgisayarını açan kullanıcı
-// yokluğunda kimin seslendiğini görür.
-func (h *Hub) kacirilanlariYolla(b *Baglanti) {
+// Çağrılar gönderildikleri anda veritabanına yazılır ama alıcı çevrimdışıysa —
+// ya da meşgulse — hiçbir yere ulaşmaz. Teslim burada tamamlanır. Sebep, iki
+// halin hangisi olduğunu istemciye söyler.
+//
+// Çağıran teslimMu'yu tutmalıdır.
+func (h *Hub) kacirilanlariYolla(b *Baglanti, sebep string) {
 	cagrilar, err := h.depo.TeslimEdilmemisCagrilar(b.uyeID)
 	if err != nil {
 		h.kayit.Error("kaçırılan çağrılar okunamadı", "uye", b.uyeID, "hata", err)
@@ -114,7 +138,8 @@ func (h *Hub) kacirilanlariYolla(b *Baglanti) {
 	}
 
 	if len(veriler) > 0 {
-		mesaj, err := protokol.Paketle(protokol.TipKacirilanlar, protokol.KacirilanlarVeri{Cagrilar: veriler})
+		mesaj, err := protokol.Paketle(protokol.TipKacirilanlar,
+			protokol.KacirilanlarVeri{Cagrilar: veriler, Sebep: sebep})
 		if err != nil {
 			h.kayit.Error("kaçırılanlar paketlenemedi", "uye", b.uyeID, "hata", err)
 			return
@@ -129,7 +154,7 @@ func (h *Hub) kacirilanlariYolla(b *Baglanti) {
 	if err := h.depo.TeslimIsaretle(idler); err != nil {
 		h.kayit.Error("teslim işaretlenemedi", "uye", b.uyeID, "hata", err)
 	}
-	h.kayit.Info("kaçırılan çağrılar iletildi", "uye", b.uyeID, "adet", len(veriler))
+	h.kayit.Info("kaçırılan çağrılar iletildi", "uye", b.uyeID, "adet", len(veriler), "sebep", sebep)
 }
 
 // ekle, bağlantıyı kaydeder. Aynı üyenin eski oturumu varsa düşürülür.
@@ -149,7 +174,9 @@ func (h *Hub) ekle(b *Baglanti) {
 	}
 }
 
-// cikar, bağlantıyı kayıttan siler ve üyeyi çevrimdışı işaretler.
+// cikar, bağlantıyı kayıttan siler. Çevrimdışılık veritabanına yazılmaz:
+// o bilgi KurumaYayinla'da hub'ın canlı kaydından türetilir. Buraya
+// "cevrimdisi" yazmak, kullanıcının meşgul tercihini her kopuşta siliyordu.
 func (h *Hub) cikar(b *Baglanti) {
 	h.mu.Lock()
 	// Yalnızca hâlâ kayıtlı olan bağlantı bizsek silelim; aksi halde yeni oturumu bozarız.
@@ -163,8 +190,8 @@ func (h *Hub) cikar(b *Baglanti) {
 		}
 		h.mu.Unlock()
 
-		if err := h.depo.DurumGuncelle(b.uyeID, model.DurumCevrimdisi); err != nil {
-			h.kayit.Error("çıkışta durum yazılamadı", "uye", b.uyeID, "hata", err)
+		if err := h.depo.SonGorulmeYaz(b.uyeID); err != nil {
+			h.kayit.Error("çıkışta son görülme yazılamadı", "uye", b.uyeID, "hata", err)
 		}
 		h.KurumaYayinla(b.kurumID)
 	} else {
@@ -245,6 +272,18 @@ func (h *Hub) KurumaYayinla(kurumID string) {
 		}
 
 		veri := protokol.DurumTamVeri{Kurum: kurum, Ben: ben, Bekleyen: []model.Uye{}}
+
+		// Sayaç yalnızca meşgulken hesaplanır: aksi halde her yayında üye başına
+		// fazladan bir sorgu atılır ve sayı kimseyi ilgilendirmez.
+		if ben.Cevrimici && ben.Durum == model.DurumMesgul {
+			adet, err := h.depo.BekleyenCagriSayisi(aliciID)
+			if err != nil {
+				// Sayaç yüzünden tam durum yayını düşmemeli; 0 bırakıp geçiyoruz.
+				h.kayit.Error("bekleyen çağrı sayılamadı", "uye", aliciID, "hata", err)
+			}
+			veri.BekleyenCagri = adet
+		}
+
 		switch {
 		case !ben.Onayli:
 			// Henüz kurumun bir parçası değil; ekip listesini göstermiyoruz.
