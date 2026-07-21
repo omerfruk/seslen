@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Menü çubuğuna tıklayınca açılan ana panel.
@@ -151,9 +152,26 @@ struct AnaGorunum: View {
         istemci.uyeler.filter(\.cevrimici).count
     }
 
+    /// `.accessory` kipindeki bir uygulama kendiliğinden öne gelmez: `openWindow`
+    /// pencereyi açar ama menü çubuğu paneli kapanınca odak bir önceki uygulamaya
+    /// döndüğü için pencere onun arkasında kalır. Uygulamayı elle etkinleştirmek
+    /// şart. `TacizPenceresi` ve `UyariPaneli` aynı ikiliyi zaten kullanıyor;
+    /// eksik olan yalnızca SwiftUI `Window` sahneleriydi.
+    private func pencereyiOneGetir(_ kimlik: String) {
+        pencereAc(id: kimlik)
+        NSApp.activate(ignoringOtherApps: true)
+        // Pencere SwiftUI güncelleme döngüsünde oluşuyor; bu tur içinde henüz
+        // yoktur, o yüzden anahtar pencere yapmayı bir sonraki tura bırakıyoruz.
+        DispatchQueue.main.async {
+            NSApp.windows
+                .first { $0.identifier?.rawValue == kimlik }?
+                .makeKeyAndOrderFront(nil)
+        }
+    }
+
     private func onayBekleyenlerSeridi(sayi: Int) -> some View {
         Button {
-            pencereAc(id: PencereKimligi.kurum)
+            pencereyiOneGetir(PencereKimligi.kurum)
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "person.badge.clock.fill")
@@ -213,7 +231,7 @@ struct AnaGorunum: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if istemci.ben?.rol.yonetimYetkisi == true {
-                Button("Kişi davet et") { pencereAc(id: PencereKimligi.kurum) }
+                Button("Kişi davet et") { pencereyiOneGetir(PencereKimligi.kurum) }
                     .buttonStyle(.link)
                     .font(.callout)
             }
@@ -248,14 +266,14 @@ struct AnaGorunum: View {
     private var altSerit: some View {
         HStack(spacing: 4) {
             Button {
-                pencereAc(id: PencereKimligi.ayarlar)
+                pencereyiOneGetir(PencereKimligi.ayarlar)
             } label: {
                 Label("Ayarlar", systemImage: "gearshape")
             }
 
             if istemci.ben?.rol.yonetimYetkisi == true {
                 Button {
-                    pencereAc(id: PencereKimligi.kurum)
+                    pencereyiOneGetir(PencereKimligi.kurum)
                 } label: {
                     Label("Kurum", systemImage: "person.3")
                 }
