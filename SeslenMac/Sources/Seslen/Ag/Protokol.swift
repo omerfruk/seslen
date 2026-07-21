@@ -16,6 +16,7 @@ enum MesajTipi: String, Codable, Sendable {
     case anket
     case anketOy = "anket_oy"
     case anketBitir = "anket_bitir"
+    case anketGecmisiIste = "anket_gecmisi_iste"
     case nabiz
 
     // Sunucu → İstemci
@@ -28,6 +29,7 @@ enum MesajTipi: String, Codable, Sendable {
     case anketGeldi = "anket_geldi"
     case anketSonuc = "anket_sonuc"
     case acikAnketler = "acik_anketler"
+    case anketGecmisi = "anket_gecmisi"
     case nabizYanit = "nabiz_yanit"
 }
 
@@ -235,6 +237,18 @@ struct AnketSonucVeri: Decodable, Sendable {
 /// Bu kaçırılanların anket karşılığı DEĞİLDİR: kuyruk geçmiş bir olayı tekrar
 /// oynatır, bu ise şu anda hâlâ doğru olan bir durumu bildirir.
 struct AcikAnketlerVeri: Decodable, Sendable {
+    var anketler: [AnketSonucVeri]
+
+    enum CodingKeys: String, CodingKey { case anketler }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        anketler = try k.decodeIfPresent([AnketSonucVeri].self, forKey: .anketler) ?? []
+    }
+}
+
+/// İstenince gelen, bitmişler dahil son anketler (yeniden eskiye).
+struct AnketGecmisiVeri: Decodable, Sendable {
     var anketler: [AnketSonucVeri]
 
     enum CodingKeys: String, CodingKey { case anketler }

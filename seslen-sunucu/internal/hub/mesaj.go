@@ -59,6 +59,8 @@ func (h *Hub) mesajIsle(b *Baglanti, zarf protokol.Zarf) {
 		h.anketOyIsle(b, zarf.Veri)
 	case protokol.TipAnketBitir:
 		h.anketBitirIsle(b, zarf.Veri)
+	case protokol.TipAnketGecmisiIste:
+		h.anketGecmisiIsle(b)
 	case protokol.TipNabiz:
 		mesaj, _ := protokol.Paketle(protokol.TipNabizYanit, nil)
 		b.Yolla(mesaj)
@@ -568,6 +570,33 @@ func (h *Hub) anketBitirIsle(b *Baglanti, ham json.RawMessage) {
 
 	anket.Kapandi = true
 	h.anketSonucuYayinla(anket)
+}
+
+// anketGecmisiSiniri, geçmiş ekranında kaç anketin gösterileceğidir. Sabit sayı
+// tarih aralığına yeğlendi: liste hiçbir zaman şişmez ve yoğun bir günün ardından
+// sakin bir haftada boş görünmez.
+const anketGecmisiSiniri = 20
+
+// anketGecmisiIsle, bitmişler dahil son anketleri isteyen üyeye yollar.
+func (h *Hub) anketGecmisiIsle(b *Baglanti) {
+	anketler, err := h.depo.SonAnketler(b.kurumID, anketGecmisiSiniri)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "anket geçmişi okunamadı")
+		return
+	}
+
+	veriler := make([]protokol.AnketSonucVeri, 0, len(anketler))
+	for _, anket := range anketler {
+		if veri, tamam := h.anketSonucuHazirla(anket, b.uyeID); tamam {
+			veriler = append(veriler, veri)
+		}
+	}
+
+	mesaj, err := protokol.Paketle(protokol.TipAnketGecmisi, protokol.AnketGecmisiVeri{Anketler: veriler})
+	if err != nil {
+		return
+	}
+	b.Yolla(mesaj)
 }
 
 // anketSonucuHazirla, anketin güncel durumunu tek bir üyenin gözünden paketler.

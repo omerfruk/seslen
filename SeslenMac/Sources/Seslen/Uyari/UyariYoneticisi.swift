@@ -128,12 +128,6 @@ final class UyariYoneticisi {
         balon.goster(.anket(veri))
     }
 
-    /// Anket kapandığında sonucu tek balonda duyurur. Menüyü hiç açmayan
-    /// kullanıcının sonucu öğrenmesinin tek yolu budur.
-    func anketSonucunuGoster(_ anket: Anket) {
-        balon.goster(.anketSonucu(anket))
-    }
-
     private func anketBildirimi(_ veri: AnketGeldiVeri) {
         guard Bundle.main.bundleIdentifier != nil, bildirimIzni == .verildi else { return }
 

@@ -25,7 +25,10 @@ const (
 	TipAnket       Tip = "anket"        // kuruma çoktan seçmeli soru sor
 	TipAnketOy     Tip = "anket_oy"     // ankete oy ver (veya oyu değiştir)
 	TipAnketBitir  Tip = "anket_bitir"  // kendi anketini süresi dolmadan kapat
-	TipNabiz       Tip = "nabiz"        // bağlantı canlılık kontrolü
+	// TipAnketGecmisiIste, geçmiş anketleri talep eder. Bağlanışta kendiliğinden
+	// gönderilmez: liste yalnızca kullanıcı geçmiş ekranını açınca gerekir.
+	TipAnketGecmisiIste Tip = "anket_gecmisi_iste"
+	TipNabiz            Tip = "nabiz" // bağlantı canlılık kontrolü
 )
 
 // Sunucudan istemciye giden mesaj tipleri.
@@ -39,6 +42,7 @@ const (
 	TipAnketGeldi    Tip = "anket_geldi"    // yeni bir anket açıldı (olay)
 	TipAnketSonuc    Tip = "anket_sonuc"    // anketin güncel durumu (durum)
 	TipAcikAnketler  Tip = "acik_anketler"  // bağlanınca: hâlâ açık olanlar
+	TipAnketGecmisi  Tip = "anket_gecmisi"  // istenince: bitmişler dahil son anketler
 	TipNabizYanit    Tip = "nabiz_yanit"    // nabız cevabı
 )
 
@@ -204,6 +208,15 @@ type AnketSonucVeri struct {
 // tekrar oynatır, bu ise şu anda hâlâ doğru olan bir durumu bildirir. Kapanmış
 // anket hiç kimseye, hiçbir koşulda sonradan iletilmez.
 type AcikAnketlerVeri struct {
+	Anketler []AnketSonucVeri `json:"anketler"`
+}
+
+// AnketGecmisiVeri, bitmişler dahil son anketleri yeniden eskiye taşır.
+//
+// Bitmiş anket menüde kendiliğinden gösterilmez ("zamanı geçti"); merak eden
+// buraya bakar. Anketler ve oylar zaten kalıcı olduğu için geçmiş uygulama
+// kapansa da durur.
+type AnketGecmisiVeri struct {
 	Anketler []AnketSonucVeri `json:"anketler"`
 }
 

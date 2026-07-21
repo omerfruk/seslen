@@ -186,10 +186,29 @@ paketlenir; map üzerinde dönmek sırayı her yayında değiştirirdi.
 İsimleri açan düğme kartta **tek** bir yerde, satır başına değil: satıra
 tıklamak oy vermek demek, aynı hareketi iki işe koşmak karışıklık olurdu.
 
-**Bitmiş anketi X ile kullanıcı kaldırır**; kendiliğinden düşmez. Gizlenen
-kimlik `SunucuIstemcisi.gizlenenAnketler` içinde tutulur ki geç gelen bir sonuç
-mesajı kapatılan kartı geri getirmesin. X yalnızca bitmiş ankette görünür:
-açık bir anketi gizlemek kullanıcının oy verme fırsatını da yok ederdi.
+**Panelde yalnızca açık anket durur.** Biten anket kendiliğinden düşer ve
+`AnketGecmisi` ekranına havale edilir; kullanıcıların bitmiş anketleri tek tek
+temizlemek zorunda kalması şikayet konusuydu ("zamanı geçti, görünmesin").
+
+Süzme iki yerde birden yapılır ve ikisi de gerekli: `anketiYerlestir` gelen
+mesajda kapalıysa listeden çıkarır, `acikAnketler` ise her çizimde yeniden
+süzer. Yalnızca birincisi olsaydı, **sürenin dolması bir sunucu mesajı
+üretmediği için** süresi biten anket panelde asılı kalırdı.
+
+X düğmesi açık ankette de vardır: ilgilenmediğin bir anketi kapatabilmelisin ve
+kapattığın geçmişten yine bulunabilir. Gizlenen kimlik
+`SunucuIstemcisi.gizlenenAnketler` içinde tutulur ki geç gelen bir sonuç mesajı
+kapatılan kartı geri getirmesin.
+
+**Anket bitince hiçbir uyarı çıkmaz.** Kapanış balonu kasten yok: biten anketi
+gözden uzak tutmak istenirken kapanışta ekrana bir şey çıkarmak, giderilmeye
+çalışılan gürültünün ta kendisi olurdu. Sonucu merak eden geçmişe bakar.
+
+**Geçmiş istenince çekilir** (`TipAnketGecmisiIste`), bağlanışta değil — liste
+yalnızca ekran açılınca gerekiyor. Son `anketGecmisiSiniri` (20) anket gelir;
+sabit sayı tarih aralığına yeğlendi, çünkü tarih sınırı yoğun bir günde uzun,
+sakin bir haftada boş liste üretir. Anketler ve oylar SQLite'ta kalıcı olduğu
+için geçmiş uygulama kapansa da durur.
 
 Özet (`Anket.ozet`) `acik` olmayan her ankette gösterilir, yalnızca `kapandi`
 bayrağında değil — anketlerin çoğu elle kapatılarak değil süresi dolarak biter.

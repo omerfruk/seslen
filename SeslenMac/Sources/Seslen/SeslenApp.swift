@@ -34,9 +34,6 @@ struct SeslenApp: App {
         istemci.anketGeldi = { [weak uyari] veri in
             uyari?.anketIsle(veri)
         }
-        istemci.anketKapandi = { [weak uyari] anket in
-            uyari?.anketSonucunuGoster(anket)
-        }
         uyari.anketOyuVerildi = { [weak istemci] anketID, secenek in
             istemci?.anketOyVer(anketID: anketID, secenek: secenek)
         }

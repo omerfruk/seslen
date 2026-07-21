@@ -688,6 +688,29 @@ func (s *Store) AcikAnketler(kurumID string, simdi time.Time) ([]model.Anket, er
 	return liste, satirlar.Err()
 }
 
+// SonAnketler, kurumun en yeni anketlerini durumuna bakmaksızın döner.
+// Geçmiş ekranı bunu kullanır; açık olanlar için AcikAnketler ayrıdır.
+func (s *Store) SonAnketler(kurumID string, sinir int) ([]model.Anket, error) {
+	satirlar, err := s.db.Query(
+		anketSecim+` WHERE kurum_id = ? ORDER BY gonderildi DESC LIMIT ?`,
+		kurumID, sinir,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer satirlar.Close()
+
+	var liste []model.Anket
+	for satirlar.Next() {
+		a, err := anketTara(satirlar.Scan)
+		if err != nil {
+			return nil, err
+		}
+		liste = append(liste, a)
+	}
+	return liste, satirlar.Err()
+}
+
 // AcikAnketimVarMi, üyenin hâlâ açık bir anketi olup olmadığını söyler.
 // Kişi başına tek açık anket kuralı, hız sınırının bedava ve anlaşılır halidir.
 func (s *Store) AcikAnketimVarMi(gonderenID string, simdi time.Time) (bool, error) {

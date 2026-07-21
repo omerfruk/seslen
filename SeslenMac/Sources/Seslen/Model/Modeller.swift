@@ -280,18 +280,6 @@ extension BalonOgesi {
         )
     }
 
-    /// Anket kapandığında sonucu duyuran balon. Menüyü hiç açmayan kullanıcının
-    /// sonucu öğrenmesinin tek yolu budur.
-    static func anketSonucu(_ anket: Anket) -> BalonOgesi {
-        BalonOgesi(
-            id: "anket-sonuc-\(anket.id)",
-            baslik: anket.soru,
-            altSatir: anket.ozet,
-            simge: "chart.bar.fill",
-            renk: .teal,
-            rozet: "SONUÇ"
-        )
-    }
 }
 
 /// Kuruma sorulmuş çoktan seçmeli soru ve güncel sonucu.

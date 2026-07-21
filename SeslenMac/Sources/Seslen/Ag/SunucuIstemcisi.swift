@@ -52,8 +52,11 @@ final class SunucuIstemcisi {
     private(set) var bekleyen: [Uye] = []
     /// Biz meşgulken kuyruğa alınmış çağrı sayısı; müsaite dönünce sıfırlanır.
     private(set) var bekleyenCagri: Int = 0
-    /// Kurumda görünen anketler; kapananlar kısa süre sonra düşürülür.
+    /// Kurumda görünen anketler. Yalnızca oy verilebilecek durumda olanlar
+    /// tutulur: biten anket zaten geçmişte, panelde yer kaplamasının anlamı yok.
     private(set) var anketler: [Anket] = []
+    /// Geçmiş ekranı açılınca doldurulur; bitmişler dahil son anketler.
+    private(set) var anketGecmisi: [Anket] = []
     /// Kullanıcıya gösterilecek son hata mesajı (menüde kısa süre görünür).
     var sonHata: String?
     /// Hata olmayan ama kullanıcının bilmesi gereken son durum (menüde görünür).
@@ -65,6 +68,15 @@ final class SunucuIstemcisi {
     /// Kendimiz hariç, seslenilebilecek kişiler.
     var digerUyeler: [Uye] {
         uyeler.filter { $0.id != ben?.id }
+    }
+
+    /// Panelde gösterilecek anketler: yalnızca hâlâ oy verilebilenler.
+    ///
+    /// Süzme burada da yapılır çünkü sürenin dolması bir sunucu mesajı üretmez;
+    /// yalnızca `anketiYerlestir`'e güvenmek, süresi dolan anketin panelde
+    /// asılı kalması demek olurdu.
+    var acikAnketler: [Anket] {
+        anketler.filter(\.acik)
     }
 
     // MARK: Olay geri çağrıları
@@ -79,8 +91,6 @@ final class SunucuIstemcisi {
     /// Yeni bir anket açıldığında çağrılır (olay). Yeniden bağlanmada gelen
     /// açık anketler bunu tetiklemez — durum, olay değil.
     var anketGeldi: ((AnketGeldiVeri) -> Void)?
-    /// Bir anket kapandığında sonucunu duyurmak için çağrılır.
-    var anketKapandi: ((Anket) -> Void)?
 
     // MARK: Özel
 
@@ -166,6 +176,7 @@ final class SunucuIstemcisi {
         bekleyen = []
         bekleyenCagri = 0
         anketler = []
+        anketGecmisi = []
         gizlenenAnketler = []
     }
 
@@ -326,27 +337,40 @@ final class SunucuIstemcisi {
         yolla(.anketBitir, AnketIDIstek(anketID: anketID))
     }
 
-    /// Bitmiş anketi menüden kaldırır.
+    /// Geçmiş anketleri sunucudan ister.
     ///
-    /// Yalnızca bu kullanıcının görünümünü etkiler; anket sunucuda durmaya
-    /// devam eder. Kimlik listede tutulur ki geç gelen bir sonuç mesajı
-    /// kapattığı kartı geri getirmesin.
+    /// Bağlanışta kendiliğinden çekilmez: liste yalnızca kullanıcı geçmiş
+    /// ekranını açınca gerekiyor, her oturumda 20 anket indirmenin anlamı yok.
+    func anketGecmisiniIste() {
+        yolla(.anketGecmisiIste, BosGovde?.none)
+    }
+
+    /// Anketi panelden kaldırır.
+    ///
+    /// Yalnızca bu kullanıcının görünümünü etkiler; anket sunucuda durmaya ve
+    /// geçmişte görünmeye devam eder. Kimlik ayrıca tutulur ki geç gelen bir
+    /// sonuç mesajı kapatılan kartı geri getirmesin.
     func anketiGizle(_ anketID: String) {
         gizlenenAnketler.insert(anketID)
         anketler.removeAll { $0.id == anketID }
     }
 
-    /// Anketi listeye ekler veya günceller; yeni kapandıysa duyurur.
+    /// Anketi panele yerleştirir veya günceller.
+    ///
+    /// Biten anket panelde tutulmaz: "zamanı geçti" — kullanıcının onu tek tek
+    /// temizlemek zorunda kalması şikayet konusuydu. Sonucu merak eden geçmiş
+    /// ekranına bakar.
     private func anketiYerlestir(_ anket: Anket) {
         guard !gizlenenAnketler.contains(anket.id) else { return }
 
+        guard anket.acik else {
+            anketler.removeAll { $0.id == anket.id }
+            return
+        }
         if let sira = anketler.firstIndex(where: { $0.id == anket.id }) {
-            let eskisiAcikti = !anketler[sira].kapandi
             anketler[sira] = anket
-            if anket.kapandi, eskisiAcikti { anketKapandi?(anket) }
         } else {
             anketler.append(anket)
-            if anket.kapandi { anketKapandi?(anket) }
         }
     }
 
@@ -390,6 +414,12 @@ final class SunucuIstemcisi {
             // Uyarı çıkarılmaz: bu bir olay değil, bağlanma anındaki durumdur.
             // Aksi halde titrek bağlantıda aynı anket her seferinde çalardı.
             for veri in gelen.anketler { anketiYerlestir(Anket(veri)) }
+
+        case .anketGecmisi:
+            guard let gelen = try? zarf.veri(AnketGecmisiVeri.self) else { return }
+            // Geçmiş sunucudan olduğu gibi alınır; gizleme yalnızca paneli
+            // ilgilendirir, kullanıcı kapattığı anketi geçmişte bulabilmeli.
+            anketGecmisi = gelen.anketler.map(Anket.init)
 
         case .bilgi:
             guard let gelen = try? zarf.veri(BilgiVeri.self) else { return }

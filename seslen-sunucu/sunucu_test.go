@@ -610,6 +610,46 @@ func TestAnketBitirmeYetkisi(t *testing.T) {
 	}
 }
 
+// TestAnketGecmisi, bitmiş anketin menüden düşse de geçmişte kaldığını
+// doğrular. Bitmiş anket kendiliğinden gösterilmiyor; merak eden buraya bakar.
+func TestAnketGecmisi(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	sonuc := k.cayAnketiAc()
+	k.ali.bekle(protokol.TipAnketGeldi, 2*time.Second)
+	k.ali.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{AnketID: sonuc.AnketID, Secenek: 1})
+	k.ali.anketSonucu(2 * time.Second)
+
+	k.omer.yolla(protokol.TipAnketBitir, protokol.AnketIDIstek{AnketID: sonuc.AnketID})
+	k.omer.anketSonucu(2 * time.Second)
+
+	// Kapalı olduğu için açık anket listesinde görünmemeli...
+	ali2 := o.baglan(k.aliToken, k.aliID)
+	ali2.yolla(protokol.TipNabiz, nil)
+	ali2.beklemeyen(protokol.TipAcikAnketler, protokol.TipNabizYanit, 2*time.Second)
+
+	// ...ama geçmişte oyuyla birlikte durmalı.
+	ali2.yolla(protokol.TipAnketGecmisiIste, nil)
+	zarf := ali2.bekle(protokol.TipAnketGecmisi, 2*time.Second)
+	var gecmis protokol.AnketGecmisiVeri
+	json.Unmarshal(zarf.Veri, &gecmis)
+
+	if len(gecmis.Anketler) != 1 {
+		t.Fatalf("geçmişte 1 anket beklenirdi, gelen: %d", len(gecmis.Anketler))
+	}
+	kayit := gecmis.Anketler[0]
+	if !kayit.Kapandi {
+		t.Error("geçmişteki anket kapalı görünmeliydi")
+	}
+	if kayit.BenimOyum != 1 {
+		t.Errorf("kendi oyum geçmişte de taşınmalıydı, gelen: %d", kayit.BenimOyum)
+	}
+	if len(kayit.Oylayanlar) != 1 || kayit.Oylayanlar[0].UyeID != k.aliID {
+		t.Errorf("oy sahipleri geçmişte de gelmeliydi, gelen: %v", kayit.Oylayanlar)
+	}
+}
+
 // TestAnketKurumSiniri, başka kurumun anketine oy verilemediğini doğrular.
 func TestAnketKurumSiniri(t *testing.T) {
 	o := ortamKur(t)

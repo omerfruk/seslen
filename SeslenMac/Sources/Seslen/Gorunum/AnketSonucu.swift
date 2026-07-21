@@ -14,7 +14,9 @@ struct AnketSonucGorunumu: View {
     let benimID: String?
     let oyVer: (Int) -> Void
     let bitir: () -> Void
-    let gizle: () -> Void
+    /// Kartı panelden kaldırır. Geçmiş ekranında nil: orada gizlemenin anlamı
+    /// yok, zaten bakmak için gidilen yer orası.
+    let gizle: (() -> Void)?
 
     /// Oy sahipleri görünüyor mu?
     ///
@@ -72,9 +74,9 @@ struct AnketSonucGorunumu: View {
                     .foregroundStyle(.teal)
             }
 
-            // Kapatma yalnızca bitmiş ankette: açık bir anketi gizlemek,
-            // kullanıcının oy verme fırsatını da yok ederdi.
-            if !anket.acik {
+            // Açık ankette de görünür: ilgilenmediğin bir anketi kapatabilmek
+            // gerekir ve kapatılan geçmişten yine bulunabilir.
+            if let gizle {
                 Button(action: gizle) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
