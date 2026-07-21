@@ -105,6 +105,15 @@ final class SunucuIstemcisi {
     private var baglantiGorevi: Task<Void, Never>?
     private var yenidenDenemeSayisi = 0
     private var kapatiliyor = false
+    /// Her bağlantı döngüsünün sıra numarası.
+    ///
+    /// `baglan()` eskisini iptal edip yenisini başlatır ama `Task.cancel()`
+    /// döngüyü o anda durdurmaz: iptal edilen döngü daha sonra uyanıp kendi
+    /// temizliğini yapar ve `soket = nil` + `baglanti = .kopuk` yazar. O yazma,
+    /// bu arada kurulmuş **yeni ve sağlıklı** bağlantının üstüne biniyordu;
+    /// ekranda "Sunucuya bağlı değilsiniz" görünürken listenin güncellenmeye
+    /// devam etmesinin sebebi buydu. Artık yalnızca güncel nesil durum yazabilir.
+    private var nesil = 0
 
     private let oturum: URLSession = {
         let yapilandirma = URLSessionConfiguration.default
@@ -227,15 +236,30 @@ final class SunucuIstemcisi {
     func baglan() {
         guard token != nil else { return }
         kapatiliyor = false
+        nesil &+= 1
+        let benimNesil = nesil
         baglantiGorevi?.cancel()
         baglantiGorevi = Task { [weak self] in
-            await self?.baglantiDongusu()
+            await self?.baglantiDongusu(nesil: benimNesil)
         }
+    }
+
+    /// Bağlantı yoksa kurar; süren bir deneme varsa ona dokunmaz.
+    ///
+    /// Menü her açıldığında koşulsuz `baglan()` çağırmak, tam o sırada el
+    /// sıkışmakta olan denemeyi iptal edip baştan başlatıyor ve bağlanmayı
+    /// kullanıcı bakmaya devam ettikçe geciktiriyordu. Geri çekilme beklemesi
+    /// sırasında durum `.hata` olduğu için o hâlde yeniden denemek serbest —
+    /// istenen de bu: kullanıcı menüyü açtıysa 30 saniye beklemesin.
+    func gerekirseBaglan() {
+        guard oturumAcik, !kapatiliyor, baglanti != .baglaniyor else { return }
+        baglan()
     }
 
     /// Bağlantıyı kapatır ve yeniden denemeyi durdurur.
     func kopar() {
         kapatiliyor = true
+        nesil &+= 1
         baglantiGorevi?.cancel()
         baglantiGorevi = nil
         soket?.cancel(with: .goingAway, reason: nil)
@@ -249,8 +273,8 @@ final class SunucuIstemcisi {
         baglan()
     }
 
-    private func baglantiDongusu() async {
-        while !Task.isCancelled && !kapatiliyor {
+    private func baglantiDongusu(nesil benimNesil: Int) async {
+        while !Task.isCancelled && !kapatiliyor && nesil == benimNesil {
             baglanti = .baglaniyor
 
             guard let token, let url = ayarlar.websocketURL(token: token) else {
@@ -265,17 +289,20 @@ final class SunucuIstemcisi {
             // İlk mesajı başarıyla okuyana kadar bağlantıyı kurulmuş saymıyoruz:
             // sunucu 401 dönerse soket hemen kapanır.
             do {
-                try await mesajDongusu(soket)
+                try await mesajDongusu(soket, nesil: benimNesil)
             } catch {
-                if !kapatiliyor && !Task.isCancelled {
+                if !kapatiliyor && !Task.isCancelled && nesil == benimNesil {
                     baglanti = .hata(kisaHata(error))
                 }
             }
 
+            // Kendi soketimizi her hâlükârda kapatırız ama paylaşılan alana
+            // yalnızca güncel nesil dokunur: aksi halde yenisinin soketini
+            // silerdik.
             soket.cancel(with: .goingAway, reason: nil)
-            self.soket = nil
+            if nesil == benimNesil { self.soket = nil }
 
-            if kapatiliyor || Task.isCancelled { break }
+            if kapatiliyor || Task.isCancelled || nesil != benimNesil { break }
 
             // Üstel geri çekilme: 1, 2, 4, 8, 16, en fazla 30 saniye.
             yenidenDenemeSayisi = min(yenidenDenemeSayisi + 1, 5)
@@ -283,14 +310,19 @@ final class SunucuIstemcisi {
             try? await Task.sleep(for: .seconds(bekleme))
         }
 
-        if !kapatiliyor {
+        if !kapatiliyor && nesil == benimNesil {
             baglanti = .kopuk
         }
     }
 
-    private func mesajDongusu(_ soket: URLSessionWebSocketTask) async throws {
+    private func mesajDongusu(_ soket: URLSessionWebSocketTask, nesil benimNesil: Int) async throws {
         while !Task.isCancelled {
             let mesaj = try await soket.receive()
+
+            // Yerimizi yeni bir bağlantı aldıysa okuduğumuzu işlemeyiz: mesaj
+            // zaten yeni soketten de gelir, iki kez işlemek uyarıyı iki kez
+            // çıkarırdı.
+            guard nesil == benimNesil else { return }
 
             // İlk başarılı mesaj: bağlantı gerçekten kuruldu.
             if baglanti != .bagli {
@@ -466,6 +498,10 @@ final class SunucuIstemcisi {
     private func yolla<Govde: Encodable>(_ tip: MesajTipi, _ govde: Govde?) {
         guard let soket, baglanti.iyi else {
             sonHata = "Sunucuya bağlı değilsiniz"
+            // Bağlantıyı burada da dürtüyoruz: kullanıcı bir şey yapmaya
+            // çalıştıysa beklemeyi sürdürmenin anlamı yok, geri çekilmenin
+            // ortasında da olsa hemen denenir.
+            gerekirseBaglan()
             return
         }
         guard let veri = try? JSONAraci.kodlayici.encode(GidenZarf(tip: tip, veri: govde)),
@@ -500,9 +536,26 @@ final class SunucuIstemcisi {
         yolla(.durumBildir, DurumBildirIstek(durum: durum))
     }
 
+    /// Kendi görünen adımızı değiştirir.
+    ///
+    /// Yerel durum burada tazelenmez: sunucu değişikliği `durum_tam` ile
+    /// kuruma yayınlıyor ve biz de o listenin içindeyiz. Adı burada da yazmak,
+    /// sunucu isteği reddettiğinde ekranda tutulan yalan bir isim bırakırdı.
+    func adDegistir(_ adSoyad: String) {
+        yolla(.adDegistir, AdDegistirIstek(adSoyad: adSoyad))
+    }
+
     /// (Yönetim) Üyenin rolünü ve en yüksek seslenme seviyesini ayarlar.
     func uyeGuncelle(uyeID: String, rol: Rol, maxSeviye: Seviye) {
         yolla(.uyeGuncelle, UyeGuncelleIstek(uyeID: uyeID, rol: rol, maxSeviye: maxSeviye))
+    }
+
+    /// (Yönetim) Başka bir üyenin görünen adını düzeltir.
+    ///
+    /// Kendi adımız için `adDegistir` kullanılır; sunucu kurucuyu yönetim
+    /// işlemlerine kapattığı için kurucunun adına ancak o yoldan dokunulabilir.
+    func uyeAdGuncelle(uyeID: String, adSoyad: String) {
+        yolla(.uyeAdGuncelle, UyeAdGuncelleIstek(uyeID: uyeID, adSoyad: adSoyad))
     }
 
     /// (Yönetim) Bekleyen katılım isteğini onaylar.

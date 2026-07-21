@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/omerfruk/seslen/seslen-sunucu/internal/model"
@@ -27,6 +28,16 @@ var (
 // Store, veritabanı bağlantısını sarar.
 type Store struct {
 	db *sql.DB
+
+	// isimMu, isim benzersizliği kontrolüyle onu izleyen yazmayı tek parça
+	// hâline getirir.
+	//
+	// Kontrol ile UPDATE ayrı ifadeler; arada kilit olmazsa iki üye aynı anda
+	// aynı adı alabiliyor. Pencere teorik değil: `SetMaxOpenConns(1)` yüzünden
+	// biri okumayı bitirip bağlantıyı bırakınca sıradaki hemen okuyor ve iki
+	// yazma da sona kalıyor — denemede 25/25 çift isim üretti. Tabloda UNIQUE
+	// kısıt yok, oluşan çift kalıcı olurdu.
+	isimMu sync.Mutex
 }
 
 const semaSQL = `
@@ -255,15 +266,17 @@ func (s *Store) KurumaKatil(kod, adSoyad string) (model.Kurum, model.Uye, string
 		return model.Kurum{}, model.Uye{}, "", err
 	}
 
-	// Aynı isimde üye varsa listede kimin kim olduğu anlaşılmaz; baştan engelliyoruz.
-	var sayi int
-	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM uyeler WHERE kurum_id = ? AND LOWER(ad_soyad) = LOWER(?)`,
-		kurum.ID, adSoyad,
-	).Scan(&sayi); err != nil {
+	// Aynı isimde üye varsa listede kimin kim olduğu anlaşılmaz; baştan
+	// engelliyoruz. Kilit `AdGuncelle` ile ortak: iki yol da aynı isim
+	// uzayına yazıyor, ayrı kilitler yarışı yalnızca yarı yarıya kapatırdı.
+	s.isimMu.Lock()
+	defer s.isimMu.Unlock()
+
+	dolu, err := s.isimDolu(kurum.ID, adSoyad, "")
+	if err != nil {
 		return model.Kurum{}, model.Uye{}, "", err
 	}
-	if sayi > 0 {
+	if dolu {
 		return model.Kurum{}, model.Uye{}, "", ErrIsimDolu
 	}
 
@@ -408,6 +421,62 @@ func (s *Store) uyeListesi(kurumID string, onayli bool) ([]model.Uye, error) {
 func (s *Store) UyeGuncelle(uyeID string, rol model.Rol, maxSeviye model.Seviye) error {
 	_, err := s.db.Exec(`UPDATE uyeler SET rol = ?, max_seviye = ? WHERE id = ?`, rol, maxSeviye, uyeID)
 	return err
+}
+
+// AdGuncelle, üyenin görünen adını değiştirir.
+//
+// Benzersizlik kontrolü katılımdakinin aynısıdır ve burada da gerekir: aksi
+// halde katılırken engellenen isim çakışması, sonradan ad değiştirerek
+// yapılabilirdi. Üyenin kendi satırı dışarıda bırakılır, yoksa yalnızca büyük
+// harf düzelten bir değişiklik ("ali veli" → "Ali Veli") kendi kendine takılırdı.
+func (s *Store) AdGuncelle(uyeID, kurumID, adSoyad string) error {
+	s.isimMu.Lock()
+	defer s.isimMu.Unlock()
+
+	dolu, err := s.isimDolu(kurumID, adSoyad, uyeID)
+	if err != nil {
+		return err
+	}
+	if dolu {
+		return ErrIsimDolu
+	}
+
+	// Kurum koşulu savunma amaçlı: çağıranlar hedefi zaten doğruluyor ama
+	// benzersizlik yalnızca kurum içinde denetlendiği için, yanlış kurumun
+	// üyesine yazan bir çağrı sessizce çift isim üretirdi.
+	_, err = s.db.Exec(
+		`UPDATE uyeler SET ad_soyad = ? WHERE id = ? AND kurum_id = ?`,
+		adSoyad, uyeID, kurumID,
+	)
+	return err
+}
+
+// isimDolu, kurumda bu adı taşıyan başka biri var mı diye bakar. `haricID`
+// verilirse o üye sayılmaz.
+//
+// Karşılaştırma SQL'de değil Go'da yapılır: SQLite'ın `LOWER()`'ı yalnızca
+// ASCII çevirdiği için "Ömer" ile "ömer" ona göre iki ayrı isimdir. Türkçe
+// adlarda benzersizlik kuralı bu yüzden yıllarca sessizce çalışmıyordu.
+// Kurumlar birkaç düzine kişilik; adları belleğe alıp karşılaştırmanın
+// ölçeklenme sorunu yok.
+func (s *Store) isimDolu(kurumID, adSoyad, haricID string) (bool, error) {
+	satirlar, err := s.db.Query(`SELECT id, ad_soyad FROM uyeler WHERE kurum_id = ?`, kurumID)
+	if err != nil {
+		return false, err
+	}
+	defer satirlar.Close()
+
+	aranan := model.AdAnahtari(adSoyad)
+	for satirlar.Next() {
+		var id, ad string
+		if err := satirlar.Scan(&id, &ad); err != nil {
+			return false, err
+		}
+		if id != haricID && model.AdAnahtari(ad) == aranan {
+			return true, nil
+		}
+	}
+	return false, satirlar.Err()
 }
 
 // UyeOnayla, bekleyen üyeyi kuruma dahil eder.

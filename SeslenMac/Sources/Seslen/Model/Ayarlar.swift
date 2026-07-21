@@ -42,6 +42,13 @@ final class Ayarlar {
     /// Uyarı sesinin şiddeti (0.0 - 1.0).
     var sesSiddeti: Double = 0.8 { didSet { kaydet() } }
 
+    /// Seviye başına seçilen uyarı sesi. Anahtar `Seviye.rawValue`.
+    ///
+    /// Sözlük seviyeyle değil metinle anahtarlanır: `Seviye` sonradan yeni bir
+    /// basamak kazanırsa (taciz eklendiğinde tam olarak bu oldu) eski kayıtlar
+    /// çözümlenmeye devam etsin. Eksik anahtar hata değil, varsayılan demektir.
+    var sesler: [String: UyariSesi] = [:] { didSet { kaydet() } }
+
     /// Sistem açılışında Seslen kendiliğinden başlasın mı?
     var acilistaBaslat: Bool = false { didSet { kaydet() } }
 
@@ -77,6 +84,16 @@ final class Ayarlar {
     /// Bir kişinin kişisel ayarını döner; tanımlı değilse varsayılanın kopyasını verir.
     func bicim(_ uyeID: String) -> UyariBicimi {
         kisisel[uyeID] ?? varsayilan
+    }
+
+    /// Seviyenin sesini döner; seçilmemişse o seviyenin varsayılanını.
+    func ses(_ seviye: Seviye) -> UyariSesi {
+        sesler[seviye.rawValue] ?? UyariSesi.varsayilan(seviye)
+    }
+
+    /// Seviyenin sesini değiştirir.
+    func sesSec(_ seviye: Seviye, _ ses: UyariSesi) {
+        sesler[seviye.rawValue] = ses
     }
 
     /// Kişisel ayarı kaldırır; kişi tekrar varsayılanı kullanmaya döner.
@@ -115,6 +132,17 @@ final class Ayarlar {
         var sesSiddeti: Double
         var acilistaBaslat: Bool
         var panelSuresi: Double
+        /// Sonradan eklendi; eski kayıtlarda yok. Zorunlu alan yapmak, ses
+        /// seçimi gelmeden önce yazılmış her ayar dosyasını çözümlenemez
+        /// kılardı — yani herkesin ayarları sıfırlanırdı.
+        ///
+        /// `UyariSesi` değil **ham metin** olarak tutulur ve bu ayrım kritik:
+        /// enum olarak çözülseydi tanınmayan tek bir ses adı (yeni sürümde
+        /// seçilip eski sürüme dönülmesi buna yeter) `Kayit`'in tamamını
+        /// çözümlenemez yapar, `yukle` erken döner ve sunucu adresinden kişisel
+        /// susturmalara kadar **bütün ayarlar** sessizce varsayılana düşerdi.
+        /// Opsiyonel alan yalnızca *yokluğu* karşılar, *tanınmayan değeri* değil.
+        var sesler: [String: String]?
         /// Kayıt biçiminin sürümü; geçiş işlemleri için.
         var surum: Int?
     }
@@ -130,7 +158,7 @@ final class Ayarlar {
             sunucuAdresi: sunucuAdresi, varsayilan: varsayilan, kisisel: kisisel,
             acilEzsin: acilEzsin, sesSiddeti: sesSiddeti,
             acilistaBaslat: acilistaBaslat, panelSuresi: panelSuresi,
-            surum: Self.guncelSurum
+            sesler: sesler.mapValues(\.rawValue), surum: Self.guncelSurum
         )
         if let veri = try? JSONEncoder().encode(kayit) {
             UserDefaults.standard.set(veri, forKey: Self.anahtar)
@@ -157,6 +185,9 @@ final class Ayarlar {
         sesSiddeti = kayit.sesSiddeti
         acilistaBaslat = kayit.acilistaBaslat
         panelSuresi = kayit.panelSuresi
+        // Tanınmayan ses adı düşürülür, kaydın tamamı değil: o seviye
+        // varsayılana döner ve kullanıcının geri kalan ayarları yerinde kalır.
+        sesler = (kayit.sesler ?? [:]).compactMapValues(UyariSesi.init(rawValue:))
         yukleniyor = false
 
         // Geçiş uygulandıysa yeni sürümle birlikte diske yaz.

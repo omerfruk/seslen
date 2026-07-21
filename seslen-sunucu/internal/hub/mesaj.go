@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -45,8 +46,12 @@ func (h *Hub) mesajIsle(b *Baglanti, zarf protokol.Zarf) {
 		h.yanitlaIsle(b, zarf.Veri)
 	case protokol.TipDurumBildir:
 		h.durumIsle(b, zarf.Veri)
+	case protokol.TipAdDegistir:
+		h.adDegistirIsle(b, zarf.Veri)
 	case protokol.TipUyeGuncelle:
 		h.uyeGuncelleIsle(b, zarf.Veri)
+	case protokol.TipUyeAdGuncelle:
+		h.uyeAdGuncelleIsle(b, zarf.Veri)
 	case protokol.TipUyeOnayla:
 		h.uyeOnaylaIsle(b, zarf.Veri)
 	case protokol.TipUyeSil:
@@ -412,6 +417,45 @@ func (h *Hub) durumIsle(b *Baglanti, ham json.RawMessage) {
 	// Yayın kilidin dışında: h.mu alıp N üyeye mesaj yolluyor, kilit altında
 	// tutmanın kazancı yok.
 	h.KurumaYayinla(b.kurumID)
+}
+
+// adDegistirIsle, kullanıcının kendi görünen adını değiştirir.
+//
+// Yönetim işlemi değildir; yetki aranmaz. Kişi yalnızca kendi adına dokunur ve
+// hedef bağlantıdan okunur (bkz. protokol.AdDegistirIstek).
+//
+// Geçmişteki çağrılar ada göre değil kimliğe göre saklandığı için eski kayıtlar
+// yeni adla görünür — istenen de budur: yanlış yazılmış bir isim geçmişte de
+// düzelmelidir.
+func (h *Hub) adDegistirIsle(b *Baglanti, ham json.RawMessage) {
+	var istek protokol.AdDegistirIstek
+	if err := json.Unmarshal(ham, &istek); err != nil {
+		b.hata(protokol.HataGecersiz, "istek çözümlenemedi")
+		return
+	}
+
+	ad, tamam := model.AdDuzelt(istek.AdSoyad)
+	if !tamam {
+		b.hata(protokol.HataGecersiz, "ad 2-40 harf arasında olmalı")
+		return
+	}
+
+	switch err := h.depo.AdGuncelle(b.uyeID, b.kurumID, ad); {
+	case errors.Is(err, store.ErrIsimDolu):
+		b.hata(protokol.HataGecersiz, "bu isimde bir üye zaten var")
+		return
+	case err != nil:
+		h.kayit.Error("ad yazılamadı", "uye", b.uyeID, "hata", err)
+		b.hata(protokol.HataSunucu, "ad yazılamadı")
+		return
+	}
+
+	// Kuruma yayınlamak şart: ad, herkesin listesinde ve gelen çağrı
+	// balonlarında görünür. Yalnızca değiştirene bildirmek, ekibin geri kalanını
+	// bir sonraki bağlantıya kadar eski isimle bırakırdı.
+	h.KurumaYayinla(b.kurumID)
+	b.Yolla(protokol.BilgiPaketle("Adınız \"" + ad + "\" olarak güncellendi"))
+	h.kayit.Info("ad değişti", "uye", b.uyeID, "yeni", ad)
 }
 
 // anketSuresi, anketin ne kadar açık kalacağıdır.
@@ -786,6 +830,51 @@ func (h *Hub) uyeGuncelleIsle(b *Baglanti, ham json.RawMessage) {
 		return
 	}
 	h.KurumaYayinla(b.kurumID)
+}
+
+// uyeAdGuncelleIsle, yöneticinin bir üyenin görünen adını düzeltmesini sağlar.
+//
+// Doğrulama adDegistirIsle ile aynı (model.AdDuzelt, çakışan isim reddi) ama
+// yetki kapısı farklı: hedef istekten geldiği için yonetimDogrula'nın üç
+// güvencesi de gerekli — istek sahibi yönetici mi, hedef aynı kurumda mı,
+// hedef kurucu değil mi. Kurucunun adına yalnızca kendisi dokunabilir; onu
+// dokunulmaz kılan kural burada da geçerli.
+func (h *Hub) uyeAdGuncelleIsle(b *Baglanti, ham json.RawMessage) {
+	var istek protokol.UyeAdGuncelleIstek
+	if err := json.Unmarshal(ham, &istek); err != nil {
+		b.hata(protokol.HataGecersiz, "istek çözümlenemedi")
+		return
+	}
+
+	ad, gecerli := model.AdDuzelt(istek.AdSoyad)
+	if !gecerli {
+		b.hata(protokol.HataGecersiz, "ad 2-40 harf arasında olmalı")
+		return
+	}
+
+	_, hedef, tamam := h.yonetimDogrula(b, istek.UyeID)
+	if !tamam {
+		return
+	}
+
+	switch err := h.depo.AdGuncelle(hedef.ID, hedef.KurumID, ad); {
+	case errors.Is(err, store.ErrIsimDolu):
+		b.hata(protokol.HataGecersiz, "bu isimde bir üye zaten var")
+		return
+	case err != nil:
+		h.kayit.Error("ad yazılamadı", "uye", hedef.ID, "hata", err)
+		b.hata(protokol.HataSunucu, "ad yazılamadı")
+		return
+	}
+
+	h.KurumaYayinla(b.kurumID)
+	b.Yolla(protokol.BilgiPaketle("Ad \"" + ad + "\" olarak güncellendi"))
+	// Adı değişen kişi de haberdar olmalı: durum_tam listeyi tazeler ama
+	// kendi adının başkası tarafından düzeltildiğini sessizce fark etmesi zor.
+	if hedef.ID != b.uyeID {
+		h.UyeyeGonder(hedef.ID, protokol.BilgiPaketle("Adınız \""+ad+"\" olarak güncellendi"))
+	}
+	h.kayit.Info("yönetici ad değiştirdi", "yonetici", b.uyeID, "uye", hedef.ID, "yeni", ad)
 }
 
 // uyeOnaylaIsle, bekleyen katılım isteğini kabul eder.

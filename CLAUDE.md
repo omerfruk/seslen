@@ -285,6 +285,112 @@ Aynı kişiden arka arkaya gelen çağrılar **tek panelde birleşir**
 kullanıcıyı üç kez aynı şeyi kapatmaya zorlar; verilen tek yanıt gruptaki
 bütün çağrılara ayrı ayrı gönderilir.
 
+**Bildirim izni verilmediğinde menü panelinde uyarı çıkar**
+(`AnaGorunum.bildirimIzniSeridi`). Ayarlar → İzinler'de zaten görünüyordu ama
+oraya kimse kendiliğinden bakmıyor: izin yokken uygulama sessizce yarım çalışır
+ve kullanıcı bunu ancak bir seslenmeyi kaçırdığında fark eder. Şerit
+kapatılamaz, çünkü çözümü tek tık uzakta.
+
+Uyarı metni **yalnızca macOS bildiriminin gelmeyeceğini** söyler; ses, panel ve
+kenar flaşı izin gerektirmez ve çalışmaya devam eder. "Hiçbir şey duymayacaksın"
+demek yalan olurdu. Geliştirme kipi (`kullanilamaz`) şeridi tetiklemez —
+düzeltilecek bir şey olmayan uyarı yalnızca gürültüdür.
+
+## Sesler
+
+Seviye başına ses `Ayarlar.sesler` içinde tutulur ve kullanıcı değiştirebilir
+(Ayarlar → Uyarılar). Varsayılanlar `UyariSesi.varsayilan`'da.
+
+**Gömülü sesler çalışma anında üretilir** (`SesUretici`), pakete ses dosyası
+konmaz. Gerekçe: macOS'un yerleşik seslerinin hepsi tek vuruşluk ve ya çok cılız
+(Tink) ya boğuk (Basso); iPhone'un bildirim sesine benzeyen bir şey yok.
+Üretilen WAV `NSSound(data:)` ile çalınır ve `SesUretici.bellek`'te saklanır.
+
+Seviyeler yalnızca yükseklikle değil **nota sayısı ve ritimle** de ayrılır:
+kullanıcı ekrana bakmadan hangi seviyede seslenildiğini duyabilmeli. Bu yüzden
+normal üç yükselen nota, önemli çift ding, acil aynı notanın hızlı tekrarı,
+taciz iki notalı alçak alarm.
+
+`SesNotasi.tini` iki değer alır. `.zil` taşıyıcının üstüne kaydırılmış üst
+sesler bindirir (2.01 ve 3.02 kat) — tam kat kullanmak sesi metalik zilden
+sentetik bir org tonuna çevirirdi. `.duz` katıksız sinüstür ve yalnızca alarmda
+kullanılır: hoş duyulmaması kasıtlı.
+
+Notalar üst üste bindiğinde toplam genlik 1.0'ı aşabiliyor; `wav` tepe değere
+göre ölçekler. Kırpılmış sinüs zil değil cızırtı gibi duyulur.
+
+**Her çalışta yeni `NSSound` örneği kurulur.** Aynı örneği yeniden kullanmak,
+tekrarlı ACİL'de ikinci vuruşun sessiz kalmasına yol açıyor.
+
+**ACİL tekrar zinciri `SesCalar.nesil` ile iptal edilir.** `asyncAfter` ile
+zincirlenen adımlar iptal edilemiyordu: ACİL tacize yükseldiğinde uçuştaki adım
+`calan?.stop()` diyerek alarmı ortasından kesiyor, kullanıcı tacizi yanıtlayıp
+her şeyi kapattıktan sonra da iki hayalet bip duyuyordu. Yeni çalma isteği ve
+`tacizDurdur` nesli artırır; uyanan eski adım kendini geçersiz bulur.
+
+**`Ayarlar.Kayit.sesler` ham metin olarak saklanır, `UyariSesi` olarak değil.**
+Enum olarak çözülseydi tanınmayan tek bir ses adı — yeni sürümde seçip eski
+sürüme dönmek buna yeter — `Kayit`'in tamamını çözümlenemez yapar, `yukle` erken
+döner ve sunucu adresinden kişisel susturmalara kadar **bütün ayarlar** sessizce
+varsayılana düşerdi. Opsiyonel alan yalnızca *yokluğu* karşılar, *tanınmayan
+değeri* değil. Yükleme `compactMapValues` ile tanınmayanı düşürür, kaydı değil.
+
+## Ad değiştirme
+
+Kişi kendi adını Ayarlar → Genel'den değiştirir (`ad_degistir`), yönetici
+başkasının adını Kurum penceresinden düzeltir (`uye_ad_guncelle`).
+
+**İki ayrı mesaj tipi olması kasıtlı.** `AdDegistirIstek` üye kimliği taşımaz;
+hedef bağlantıdan okunur ve böylece başkasına dokunma ihtimali baştan yok olur.
+Kimlik alanı eklenseydi sunucu her istekte "bu senin kimliğin mi" kontrolü
+yapmak zorunda kalırdı. Yetki isteyen işlem kendi kapısından girer ve
+`yonetimDogrula`'nın üç güvencesine tabi olur — kurucunun adına yalnızca
+kendisi dokunabilir.
+
+**`AdDuzelt` görünmez karakterleri ayıklar.** Sıfır genişlikli boşluk (U+200B)
+içeren bir ad ekranda mevcut bir üyeyle **birebir aynı** görünür; süzülmediği
+sürece isim benzersizliği tek karakterle tamamen atlatılabiliyordu (kurucu
+"Ömer" varken ikinci bir "Ömer" yaratmak mümkündü). Aynı kol yön değiştirme
+işaretlerini (U+202E) ve denetim karakterlerini de düşürür. Boşluk sayılanlar
+silinmez, düz boşluğa çevrilir — silinseydi "Ali\nVeli" → "AliVeli" olurdu.
+
+Ad ayrıca **NFC'ye** normalleştirilir: macOS'tan kopyalanan metin ayrık gelir
+("Ö" = O + U+0308) ve normalleştirilmezse aynı ad iki farklı bayt dizisi olarak
+saklanıp benzersizlikten kaçar. En az bir harf şartı da var; "12", "!!" ya da
+yalnızca emoji kimseyi tanıtmaz.
+
+**İsim benzersizliği Go'da denetlenir, SQL'de değil** (`store.isimDolu`).
+SQLite'ın `LOWER()`'ı yalnızca ASCII çevirir: "Ömer" ile "ömer" onun gözünde
+iki ayrı isimdir ve kural Türkçe adlarda yıllarca sessizce çalışmadı.
+`model.AdAnahtari` ayrıca I/İ'yi elle çevirir — Go'nun `ToLower`'ı da Türkçeyi
+değil İngilizceyi izler.
+
+Kontrol katılımda **ve** ad değiştirmede yapılır; yalnızca katılımda olsaydı
+engellenen çakışma sonradan ad değiştirerek yapılabilirdi. Üyenin kendi satırı
+dışarıda bırakılır, yoksa "ali veli" → "Ali Veli" gibi yalnızca büyük harf
+düzelten bir değişiklik kendi kendine takılırdı.
+
+Kontrol ile yazma arasında `store.isimMu` kilidi var ve **ikisi de aynı kilidi
+kullanır** (`AdGuncelle` ve `KurumaKatil`). Kilitsiz hâlde yarış teorik değil
+pratikti: `SetMaxOpenConns(1)` yüzünden biri okumayı bitirip bağlantıyı bırakınca
+sıradaki hemen okuyor, iki yazma da sona kalıyordu — denemede 25/25 çift isim.
+Tabloda UNIQUE kısıt yok, oluşan çift kalıcı olurdu.
+
+**Ad kutusundan odak kaybı kaydetmez** (hem `AdDuzenleyici` hem `AdAlani`).
+Kaydetseydi "Ali"yi düzeltmeye başlayıp "Al" yazmışken başka yere tıklamak,
+yarım kalmış adı `KurumaYayinla` ile tüm kuruma yayardı — üstelik iki harf
+olduğu için doğrulamadan da geçerek. Kaydetmenin yolu Enter ya da düğme.
+
+Sunucunun cevabı Ayarlar penceresinde de gösterilir. `sonHata` yalnızca menü
+panelinde ve Kurum penceresinde çiziliyordu; ad alanı Ayarlar'dan sunucuya yazan
+ilk denetim olduğu için "bu isimde bir üye zaten var" kullanıcıya hiç ulaşmıyor,
+ekranda hiçbir şey olmamış gibi duruyordu.
+
+Değişiklik `KurumaYayinla` ile tüm kuruma gider: ad herkesin listesinde ve gelen
+çağrı balonlarında görünür. Geçmiş kayıtlar ada göre değil kimliğe göre
+saklandığı için eski seslenmeler de yeni adla görünür — istenen de bu, yanlış
+yazılmış bir isim geçmişte de düzelmeli.
+
 ## Taciz seviyesi
 
 `normal < onemli < acil < taciz`. Taciz, alıcının ekranında yanıtlanana kadar
@@ -324,6 +430,28 @@ DMG olarak GitHub Releases'e yüklenir, Homebrew Cask ile kurulur. Cask'taki
 
 Ad-hoc imza şart: Anahtar Zinciri erişimi ve açılışta başlatma (`SMAppService`)
 kararlı bir paket kimliği olmadan çalışmaz.
+
+### Kendi kendine güncelleme
+
+`GuncellemeDenetcisi` yalnızca haber vermiyor, kuruyor: son yayımın DMG'sini
+indirir, bağlar ve içindeki paketi çalışan uygulamanın üzerine kopyalar. Sparkle
+kullanılmadı — imzalı paket ve Apple hesabı ister, ikisi de yok. Ad-hoc imza
+bunu engellemiyor; değişen tek şey diskteki paket.
+
+**Değiştirmeyi uygulama kendisi yapamaz.** Kendi paketini silen bir süreç
+altından zemini çeker: kopyalama yarıda kalırsa ne eski ne yeni uygulama kalır.
+İş, uygulamanın kapanmasını bekleyen ayrı bir kabuk betiğine devredilir
+(`kurulumBetigi`) ve o betik eski paketi silmez, **yeniden adlandırır** —
+kopya tutmazsa geri dönecek bir şey kalsın.
+
+Kopya `ditto` ile yapılır; `cp -R` uygulama paketlerindeki sembolik bağları ve
+genişletilmiş öznitelikleri olduğu gibi taşımaz. Karantina bayrağı elle silinir,
+gerekçesi Cask'taki `postflight` ile aynı.
+
+Yazma izni **indirmeden önce** sorulur (`kurabilir`): /Applications altındaki bir
+uygulamayı yönetici olmayan kullanıcı değiştiremez ve 15 MB indirip sonunda
+"izin yok" demek kullanıcının vaktini harcamaktır. O durumda brew komutu
+gösterilir — eski davranış kaybolmadı, yedeğe düştü.
 
 ## Yayınlama
 

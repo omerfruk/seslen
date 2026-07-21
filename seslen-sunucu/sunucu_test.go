@@ -1264,6 +1264,219 @@ func TestAyniIsimReddedilir(t *testing.T) {
 	}
 }
 
+// TestAdDegistirme, kişinin kendi adını değiştirebildiğini ve değişikliğin
+// ekibin geri kalanına yayıldığını doğrular.
+func TestAdDegistirme(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	k.ali.yolla(protokol.TipAdDegistir, protokol.AdDegistirIstek{AdSoyad: "  Ali   Veli Yılmaz "})
+
+	// Değişikliği Ömer de görmeli: ad, herkesin listesinde görünür.
+	// Kurulumdan kalan durum_tam'lar atlanıyor; aranan, Ali'nin yeni adının
+	// göründüğü ilk anlık görüntü. Fazla boşluklar da toplanmış olmalı.
+	k.omer.durumTamAra(3*time.Second, func(d protokol.DurumTamVeri) bool {
+		for _, u := range d.Uyeler {
+			if u.ID == k.aliID {
+				return u.AdSoyad == "Ali Veli Yılmaz"
+			}
+		}
+		return false
+	})
+}
+
+// durumTamAra, koşulu sağlayan bir durum_tam gelene kadar okur.
+//
+// Tek bir `bekle` yetmiyor: kurulum sırasında yayınlanmış eski anlık görüntüler
+// okunmadan kuyrukta bekliyor ve ilki her zaman aranan değişiklikten öncesine
+// ait oluyor.
+func (c *istemci) durumTamAra(sure time.Duration, kosul func(protokol.DurumTamVeri) bool) {
+	c.t.Helper()
+	bitis := time.Now().Add(sure)
+	for time.Now().Before(bitis) {
+		zarf := c.bekle(protokol.TipDurumTam, time.Until(bitis))
+		var durum protokol.DurumTamVeri
+		if err := json.Unmarshal(zarf.Veri, &durum); err != nil {
+			c.t.Fatalf("durum çözümlenemedi: %v", err)
+		}
+		if kosul(durum) {
+			return
+		}
+	}
+	c.t.Fatalf("beklenen durum %v içinde gelmedi", sure)
+}
+
+// TestAdDegistirmeDogrulama, geçersiz ve çakışan adların reddedildiğini
+// doğrular. Katılırken engellenen isim çakışması sonradan ad değiştirerek de
+// yapılamamalı.
+func TestAdDegistirmeDogrulama(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	var hata protokol.HataVeri
+
+	k.ali.yolla(protokol.TipAdDegistir, protokol.AdDegistirIstek{AdSoyad: "A"})
+	zarf := k.ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("tek harflik ad reddedilmeliydi, gelen: %q", hata.Kod)
+	}
+
+	// Büyük/küçük harf farkı çakışmayı gizlememeli.
+	k.ali.yolla(protokol.TipAdDegistir, protokol.AdDegistirIstek{AdSoyad: "ömer"})
+	zarf = k.ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("dolu isim reddedilmeliydi, gelen: %q", hata.Kod)
+	}
+
+	// Görünmez karakterle benzersizlik atlatılamamalı. "Ömer​" ekranda
+	// kurucudan ayırt edilemez; süzülmeseydi listede ve gelen çağrı balonunda
+	// iki "Ömer" olurdu ve kuralın kendisi anlamsızlaşırdı.
+	k.ali.yolla(protokol.TipAdDegistir, protokol.AdDegistirIstek{AdSoyad: "Ömer​"})
+	zarf = k.ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("görünmez karakterli çakışma reddedilmeliydi, gelen: %q", hata.Kod)
+	}
+
+	// Ayrık biçim de aynı ada işaret eder: macOS'tan kopyalanan metin
+	// "Ö" yerine O + U+0308 taşır.
+	k.ali.yolla(protokol.TipAdDegistir, protokol.AdDegistirIstek{AdSoyad: "Ömer"})
+	zarf = k.ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("ayrık biçimli çakışma reddedilmeliydi, gelen: %q", hata.Kod)
+	}
+
+	// Kişinin kendi adını yeniden yazması çakışma sayılmamalı; aksi halde
+	// yalnızca büyük harf düzelten bir değişiklik kendi kendine takılırdı.
+	k.ali.yolla(protokol.TipAdDegistir, protokol.AdDegistirIstek{AdSoyad: "ALİ VELİ"})
+	k.ali.beklemeyen(protokol.TipHata, protokol.TipDurumTam, 2*time.Second)
+}
+
+// TestYoneticiUyeAdiDuzeltir, yöneticinin başka bir üyenin adını
+// düzeltebildiğini; kurucunun ve düz üyenin bu yola kapalı olduğunu doğrular.
+//
+// Adın ayrı bir mesaj tipiyle taşınması bu testin varlık sebebi: `ad_degistir`
+// hedefi bağlantıdan okuduğu için yetki sorusu hiç doğmuyordu, `uye_ad_guncelle`
+// ise hedefi istekten aldığından yonetimDogrula'nın üç kontrolüne de muhtaç.
+func TestYoneticiUyeAdiDuzeltir(t *testing.T) {
+	o := ortamKur(t)
+
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "HAY Teknoloji", "kurucuAd": "Ömer",
+	})
+	omerToken := yanit["token"].(string)
+	omerID := yanit["ben"].(map[string]any)["id"].(string)
+	katilimKodu := yanit["kurum"].(map[string]any)["katilimKodu"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Ali Veli",
+	})
+	aliToken := yanit["token"].(string)
+	aliID := yanit["ben"].(map[string]any)["id"].(string)
+
+	_, yanit = o.gonderJSON("/api/kurum/katil", map[string]string{
+		"kod": katilimKodu, "adSoyad": "Zeynep",
+	})
+	zeynepToken := yanit["token"].(string)
+	zeynepID := yanit["ben"].(map[string]any)["id"].(string)
+
+	omer := o.baglan(omerToken, omerID)
+	omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	ali := o.baglan(aliToken, aliID)
+	ali.bekle(protokol.TipDurumTam, 2*time.Second)
+	zeynep := o.baglan(zeynepToken, zeynepID)
+	zeynep.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	// Kurucu ikisini de onaylar, Ali'yi yönetici yapar.
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: aliID})
+	omer.yolla(protokol.TipUyeOnayla, protokol.UyeIDIstek{UyeID: zeynepID})
+	omer.yolla(protokol.TipUyeGuncelle, protokol.UyeGuncelleIstek{
+		UyeID: aliID, Rol: model.RolYonetici, MaxSeviye: model.SeviyeAcil,
+	})
+	ali.durumTamAra(3*time.Second, func(d protokol.DurumTamVeri) bool {
+		return d.Ben.Rol == model.RolYonetici && d.Ben.Onayli
+	})
+
+	// Yönetici, üyenin adını düzeltebilmeli; fazla boşluklar da toplanmalı.
+	ali.yolla(protokol.TipUyeAdGuncelle, protokol.UyeAdGuncelleIstek{
+		UyeID: zeynepID, AdSoyad: "  Zeynep   Kaya ",
+	})
+	zeynep.durumTamAra(3*time.Second, func(d protokol.DurumTamVeri) bool {
+		return d.Ben.AdSoyad == "Zeynep Kaya"
+	})
+
+	var hata protokol.HataVeri
+
+	// Kurucu dokunulmaz: adına yönetici de dokunamaz.
+	ali.yolla(protokol.TipUyeAdGuncelle, protokol.UyeAdGuncelleIstek{
+		UyeID: omerID, AdSoyad: "Başkası",
+	})
+	zarf := ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataYetkisiz {
+		t.Errorf("kurucunun adı korunmalıydı, gelen: %q", hata.Kod)
+	}
+
+	// Çakışan ad yönetici eliyle de yazılamamalı; katılışta konan kural
+	// yönetim yolundan dolanılabilseydi listede iki "Ömer" olurdu.
+	ali.yolla(protokol.TipUyeAdGuncelle, protokol.UyeAdGuncelleIstek{
+		UyeID: zeynepID, AdSoyad: "ömer",
+	})
+	zarf = ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("dolu isim reddedilmeliydi, gelen: %q", hata.Kod)
+	}
+
+	// Düz üye başkasının adına dokunamaz.
+	zeynep.yolla(protokol.TipUyeAdGuncelle, protokol.UyeAdGuncelleIstek{
+		UyeID: aliID, AdSoyad: "Yeni Ad",
+	})
+	zarf = zeynep.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataYetkisiz {
+		t.Errorf("üye başkasının adını değiştirememeli, gelen: %q", hata.Kod)
+	}
+}
+
+// TestYoneticiYetkiDegistirir, yönetim yetkisinin kurucuya özel olmadığını
+// doğrular: yönetici de rol ve seslenme yetkisi atayabilir.
+func TestYoneticiYetkiDegistirir(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	// Ali yönetici olur.
+	k.omer.yolla(protokol.TipUyeGuncelle, protokol.UyeGuncelleIstek{
+		UyeID: k.aliID, Rol: model.RolYonetici, MaxSeviye: model.SeviyeAcil,
+	})
+	k.ali.durumTamAra(3*time.Second, func(d protokol.DurumTamVeri) bool {
+		return d.Ben.Rol == model.RolYonetici
+	})
+
+	// Üçüncü kişi olmadan yönetici kendi yetkisini de yazabilmeli: kontrol
+	// hedefin kim olduğuna değil, isteği yapanın yetkisine bakıyor.
+	k.ali.yolla(protokol.TipUyeGuncelle, protokol.UyeGuncelleIstek{
+		UyeID: k.aliID, Rol: model.RolYonetici, MaxSeviye: model.SeviyeTaciz,
+	})
+	k.ali.durumTamAra(3*time.Second, func(d protokol.DurumTamVeri) bool {
+		return d.Ben.MaxSeviye == model.SeviyeTaciz
+	})
+
+	// Kurucunun rolü yöneticiye kapalı.
+	k.ali.yolla(protokol.TipUyeGuncelle, protokol.UyeGuncelleIstek{
+		UyeID: k.omerID, Rol: model.RolUye, MaxSeviye: model.SeviyeNormal,
+	})
+	zarf := k.ali.bekle(protokol.TipHata, 2*time.Second)
+	var hata protokol.HataVeri
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataYetkisiz {
+		t.Errorf("kurucunun rolü korunmalıydı, gelen: %q", hata.Kod)
+	}
+}
+
 // TestHaykirmaAkisi, herkese yayının kurumdaki diğer üyelere ulaştığını,
 // gönderene geri dönmediğini ve onaysız üyeye kapalı olduğunu doğrular.
 func TestHaykirmaAkisi(t *testing.T) {

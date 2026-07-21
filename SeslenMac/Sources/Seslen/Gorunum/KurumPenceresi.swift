@@ -28,6 +28,16 @@ struct KurumPenceresi: View {
             KatilimKoduSeridi()
             Divider()
 
+            // Sunucunun reddi burada da görünmeli: ad düzenlemenin tek geri
+            // bildirimi bu şerit. Menü paneli açık olmayabilir ve "bu isimde
+            // bir üye zaten var" uyarısını göremeyen yönetici, değişikliğin
+            // neden geri döndüğünü anlayamazdı.
+            if let hata = istemci.sonHata {
+                durumSeridi(hata, renk: .red, simge: "exclamationmark.circle.fill")
+            } else if let bilgi = istemci.sonBilgi {
+                durumSeridi(bilgi, renk: .accentColor, simge: "checkmark.circle.fill")
+            }
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if !istemci.bekleyen.isEmpty {
@@ -37,6 +47,23 @@ struct KurumPenceresi: View {
                 }
                 .padding(18)
             }
+        }
+    }
+
+    private func durumSeridi(_ mesaj: String, renk: Color, simge: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: simge)
+            Text(mesaj).font(.caption).lineLimit(2)
+            Spacer()
+        }
+        .foregroundStyle(renk)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 7)
+        .background(renk.opacity(0.12))
+        .task(id: mesaj) {
+            try? await Task.sleep(for: .seconds(5))
+            istemci.sonHata = nil
+            istemci.sonBilgi = nil
         }
     }
 }
@@ -149,11 +176,50 @@ private struct BekleyenlerBolumu: View {
 private struct UyelerBolumu: View {
     @Environment(SunucuIstemcisi.self) private var istemci
     @State private var silinecek: Uye?
+    @State private var arama = ""
+
+    /// Aramada `localizedStandardContains` kullanılır: Türkçede aksanı ve
+    /// büyük/küçük harfi birlikte gözeten tek eşleştirme bu. Düz
+    /// `contains` "şamil" yazana "Şamil"i bulduramazdı.
+    private var suzulmusUyeler: [Uye] {
+        let temiz = arama.trimmingCharacters(in: .whitespaces)
+        guard !temiz.isEmpty else { return istemci.uyeler }
+        return istemci.uyeler.filter { $0.adSoyad.localizedStandardContains(temiz) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Üyeler (\(istemci.uyeler.count))", systemImage: "person.3")
-                .font(.headline)
+            HStack {
+                Label("Üyeler (\(istemci.uyeler.count))", systemImage: "person.3")
+                    .font(.headline)
+
+                Spacer()
+
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    TextField("Ara", text: $arama)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .frame(width: 150)
+                    if !arama.isEmpty {
+                        Button {
+                            arama = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06))
+                )
+            }
 
             HStack(spacing: 0) {
                 Text("Ad Soyad").frame(maxWidth: .infinity, alignment: .leading)
@@ -166,9 +232,17 @@ private struct UyelerBolumu: View {
             .padding(.horizontal, 12)
 
             VStack(spacing: 0) {
-                ForEach(Array(istemci.uyeler.enumerated()), id: \.element.id) { sira, uye in
-                    if sira > 0 { Divider() }
-                    UyeYonetimSatiri(uye: uye) { silinecek = uye }
+                if suzulmusUyeler.isEmpty {
+                    Text("\"\(arama)\" ile eşleşen üye yok")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                } else {
+                    ForEach(Array(suzulmusUyeler.enumerated()), id: \.element.id) { sira, uye in
+                        if sira > 0 { Divider() }
+                        UyeYonetimSatiri(uye: uye) { silinecek = uye }
+                    }
                 }
             }
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
@@ -188,6 +262,86 @@ private struct UyelerBolumu: View {
     }
 }
 
+/// Yerinde düzenlenebilen ad alanı.
+///
+/// Kutu her zaman görünmez: on kişilik bir listede on metin kutusu, satırların
+/// hangisinin okunacak hangisinin doldurulacak olduğunu belirsizleştirir. Ad
+/// önce düz metindir, kaleme basınca kutuya döner.
+private struct AdAlani: View {
+    let mevcut: String
+    let kaydet: (String) -> Void
+
+    @State private var duzenleniyor = false
+    @State private var taslak = ""
+    @FocusState private var odakta: Bool
+
+    private var temiz: String {
+        taslak.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Sunucudaki doğrulamanın istemci tarafındaki karşılığı; yaptırım orada.
+    private var gecerli: Bool {
+        (2...40).contains(temiz.count) && temiz != mevcut
+    }
+
+    var body: some View {
+        if duzenleniyor {
+            HStack(spacing: 4) {
+                TextField("", text: $taslak)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .frame(maxWidth: 180)
+                    .focused($odakta)
+                    .onSubmit(bitir)
+                    // Odak kaybı **kaydetmez**, yalnızca düzenlemeyi kapatır.
+                    // Kaydetseydi "Ali"yi düzeltmeye başlayıp "Al" yazmışken
+                    // arama kutusuna tıklamak, yarım kalmış adı sunucuya yollayıp
+                    // `KurumaYayinla` ile tüm kuruma yayardı — üstelik "Al" iki
+                    // harf olduğu için doğrulamadan da geçerek.
+                    //
+                    // Ayarlar'daki `AdDuzenleyici` de kaydetmiyor; iki yeniden
+                    // adlandırma arayüzünün zıt davranması başlı başına hataydı.
+                    .onChange(of: odakta) { _, yeni in
+                        if !yeni { duzenleniyor = false }
+                    }
+
+                // Odak kaybı artık kaydetmediği için düğme şart: yoksa
+                // kaydetmenin tek yolu Enter olurdu ve bu keşfedilebilir değil.
+                Button("Kaydet", action: bitir)
+                    .controlSize(.small)
+                    .disabled(!gecerli)
+
+                Button("Vazgeç") { duzenleniyor = false }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+            }
+            .onAppear {
+                taslak = mevcut
+                odakta = true
+            }
+        } else {
+            HStack(spacing: 5) {
+                Text(mevcut).font(.system(size: 13))
+                Button {
+                    duzenleniyor = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Adı düzelt")
+            }
+        }
+    }
+
+    private func bitir() {
+        defer { duzenleniyor = false }
+        guard gecerli else { return }
+        kaydet(temiz)
+    }
+}
+
 /// Üye listesindeki tek satır: rol ve yetki burada değiştirilir.
 private struct UyeYonetimSatiri: View {
     let uye: Uye
@@ -199,13 +353,24 @@ private struct UyeYonetimSatiri: View {
     private var kilitli: Bool { uye.rol == .kurucu }
     private var benMiyim: Bool { uye.id == istemci.ben?.id }
 
+    /// Ad, rol ve yetkiden ayrı bir eksen: kurucunun adına da kendisi
+    /// dokunabilmeli. Kendi adını düzeltmek yönetim işlemi değildir, bu yüzden
+    /// kurucu dokunulmazlığına takılmaz — yalnızca yolu farklıdır.
+    private var adDuzenlenebilir: Bool { !kilitli || benMiyim }
+
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
                 Circle()
                     .fill(uye.cevrimici ? Color.green : Color.gray.opacity(0.5))
                     .frame(width: 7, height: 7)
-                Text(uye.adSoyad).font(.system(size: 13))
+
+                if adDuzenlenebilir {
+                    AdAlani(mevcut: uye.adSoyad, kaydet: adiYaz)
+                } else {
+                    Text(uye.adSoyad).font(.system(size: 13))
+                }
+
                 if benMiyim {
                     Text("siz")
                         .font(.system(size: 9))
@@ -267,5 +432,18 @@ private struct UyeYonetimSatiri: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
+    }
+
+    /// Kendi adımız için `ad_degistir`, başkasınınki için yönetim mesajı.
+    ///
+    /// Ayrım sunucudaki iki ayrı kapıya karşılık gelir: kimlik taşımayan istek
+    /// hedefi bağlantıdan okur, yönetim isteği ise yetki kontrolünden geçer.
+    /// Kurucunun kendi adını yazabilmesinin tek yolu birincisidir.
+    private func adiYaz(_ ad: String) {
+        if benMiyim {
+            istemci.adDegistir(ad)
+        } else {
+            istemci.uyeAdGuncelle(uyeID: uye.id, adSoyad: ad)
+        }
     }
 }

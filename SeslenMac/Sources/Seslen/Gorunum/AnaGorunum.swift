@@ -40,12 +40,12 @@ struct AnaGorunum: View {
             Divider()
             altSerit
         }
-        .frame(width: 340)
+        // Başlık ve eylem düğmeleri büyüdükçe 340 dar kaldı: "Herkese haykır"
+        // ile "Anket aç" yan yana sığmayıp kırpılıyordu.
+        .frame(width: 380)
         .onAppear {
             uyari.hepsiniTemizle()
-            if istemci.oturumAcik, !istemci.baglanti.iyi {
-                istemci.baglan()
-            }
+            istemci.gerekirseBaglan()
         }
         .task {
             await uyari.izinDurumunuYenile()
@@ -57,6 +57,10 @@ struct AnaGorunum: View {
     private var kisiListesi: some View {
         VStack(spacing: 0) {
             baslik
+
+            if uyari.bildirimIzniEksik {
+                bildirimIzniSeridi
+            }
 
             if let ben = istemci.ben, ben.rol.yonetimYetkisi, !istemci.bekleyen.isEmpty {
                 onayBekleyenlerSeridi(sayi: istemci.bekleyen.count)
@@ -134,7 +138,7 @@ struct AnaGorunum: View {
                 renk: .purple
             ) { haykirmaAcik = true }
 
-            Divider().frame(height: 18)
+            Divider().frame(height: 24)
 
             eylemDugmesi(
                 baslik: "Anket aç",
@@ -142,16 +146,16 @@ struct AnaGorunum: View {
                 renk: .teal
             ) { anketAcik = true }
 
-            Divider().frame(height: 18)
+            Divider().frame(height: 24)
 
             // Tek geçmiş girişi: hem biten anketler hem eski seslenmeler burada.
             Button {
                 gecmisAcik = true
             } label: {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 8)
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -165,43 +169,47 @@ struct AnaGorunum: View {
         baslik: String, simge: String, renk: Color, secildi: @escaping () -> Void
     ) -> some View {
         Button(action: secildi) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Image(systemName: simge)
+                    .font(.system(size: 14))
                 Text(baslik)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(renk)
-        .background(Color.purple.opacity(0.14))
+        // Zemin de düğmenin kendi rengini alır. Sabit mor olduğu sürece teal
+        // "Anket aç" mor zeminde duruyordu; düğmeler büyüyünce göze battı.
+        .background(renk.opacity(0.14))
         .disabled(!istemci.baglanti.iyi)
     }
 
     private var baslik: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: "megaphone.fill")
+                .font(.system(size: 16))
                 .foregroundStyle(.tint)
             Text(istemci.kurum?.ad ?? "Seslen")
-                .font(.headline)
+                .font(.system(size: 16, weight: .semibold))
                 .lineLimit(1)
 
             Spacer()
 
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Circle()
                     .fill(istemci.baglanti.iyi ? Color.green : Color.orange)
-                    .frame(width: 7, height: 7)
+                    .frame(width: 8, height: 8)
                 Text(istemci.baglanti.iyi ? "\(cevrimiciSayisi)/\(istemci.uyeler.count)" : istemci.baglanti.baslik)
-                    .font(.caption)
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     private var cevrimiciSayisi: Int {
@@ -223,6 +231,42 @@ struct AnaGorunum: View {
                 .first { $0.identifier?.rawValue == kimlik }?
                 .makeKeyAndOrderFront(nil)
         }
+    }
+
+    /// Bildirim izni verilmediğinde çıkan uyarı.
+    ///
+    /// Ayarlar → İzinler'de zaten görünüyor ama oraya kimse kendiliğinden
+    /// bakmıyor: izin verilmediğinde uygulama sessizce yarım çalışır ve
+    /// kullanıcı bunu ancak bir seslenmeyi kaçırdığında fark eder. Uyarı
+    /// kapatılamaz, çünkü çözümü tek tık uzakta.
+    private var bildirimIzniSeridi: some View {
+        Button {
+            Task { await uyari.bildirimIzniIste() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "bell.slash.fill")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Bildirimlere izin verilmedi")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Sana seslenildiğinde macOS bildirimi gelmez.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("İzin ver")
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.orange.opacity(0.28)))
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(Color.orange.opacity(0.14))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Bildirim izni olmadan ses, panel ve kenar flaşı çalışmaya devam eder; yalnızca macOS bildirimi gelmez.")
     }
 
     private func onayBekleyenlerSeridi(sayi: Int) -> some View {

@@ -60,7 +60,7 @@ private struct GenelSekmesi: View {
             if let kurum = istemci.kurum, let ben = istemci.ben {
                 Section("Oturum") {
                     LabeledContent("Kurum", value: kurum.ad)
-                    LabeledContent("Ad Soyad", value: ben.adSoyad)
+                    AdDuzenleyici(mevcut: ben.adSoyad)
                     LabeledContent("Rol", value: ben.rol.baslik)
                     LabeledContent("Seslenme yetkiniz", value: ben.maxSeviye.baslik)
                     Button("Oturumu kapat", role: .destructive) {
@@ -105,10 +105,84 @@ private struct GenelSekmesi: View {
     }
 }
 
-/// Kurulu sürümü gösterir ve yenisi çıkmış mı diye bakar.
+/// Kullanıcının kendi görünen adını değiştirdiği alan.
 ///
-/// Uygulama kendini güncelleyemiyor (imzalı paket ve Apple hesabı gerektirir),
-/// bu yüzden bölüm haber verip kurulum yolunu göstermekle yetinir.
+/// Yazdıkça değil, "Kaydet" ile gönderilir: her tuş vuruşunda sunucuya mesaj
+/// yollamak, ekipteki herkesin listesini "A", "Al", "Ali" diye üç kez
+/// tazelemek demek olurdu.
+private struct AdDuzenleyici: View {
+    /// Sunucudaki güncel ad. Kayıt sonrası buradan geri gelir.
+    let mevcut: String
+
+    @Environment(SunucuIstemcisi.self) private var istemci
+    @State private var taslak = ""
+    @FocusState private var odakta: Bool
+
+    private var temiz: String {
+        taslak.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Sunucudaki doğrulamanın istemci tarafındaki karşılığı; yaptırım orada.
+    private var gecerli: Bool {
+        (2...40).contains(temiz.count) && temiz != mevcut
+    }
+
+    var body: some View {
+        LabeledContent("Ad Soyad") {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    TextField("", text: $taslak)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($odakta)
+                        .onSubmit(kaydet)
+
+                    Button("Kaydet", action: kaydet)
+                        .disabled(!gecerli || !istemci.baglanti.iyi)
+                }
+
+                // Sunucunun cevabı burada gösterilmeli. `sonHata` yalnızca menü
+                // panelinde ve Kurum penceresinde çiziliyor; bu alan Ayarlar'dan
+                // sunucuya yazan ilk denetim olduğu için reddedilen bir ad
+                // ("bu isimde bir üye zaten var") kullanıcıya hiç ulaşmıyor,
+                // ekranda hiçbir şey olmamış gibi duruyordu.
+                if let hata = istemci.sonHata {
+                    yanitSatiri(hata, renk: .red, simge: "exclamationmark.circle.fill")
+                } else if let bilgi = istemci.sonBilgi {
+                    yanitSatiri(bilgi, renk: .green, simge: "checkmark.circle.fill")
+                }
+            }
+        }
+        // Sunucu adı kabul edince (ya da başka bir cihazdan değişince) alan
+        // güncel değere döner. Kullanıcı yazarken ezmemek için odak dışarıdayken.
+        .onChange(of: mevcut, initial: true) { _, yeni in
+            if !odakta { taslak = yeni }
+        }
+    }
+
+    private func yanitSatiri(_ mesaj: String, renk: Color, simge: String) -> some View {
+        Label(mesaj, systemImage: simge)
+            .font(.caption)
+            .foregroundStyle(renk)
+            .fixedSize(horizontal: false, vertical: true)
+            .task(id: mesaj) {
+                try? await Task.sleep(for: .seconds(5))
+                istemci.sonHata = nil
+                istemci.sonBilgi = nil
+            }
+    }
+
+    private func kaydet() {
+        guard gecerli else { return }
+        // Önceki cevabı temizliyoruz: aksi halde eski "güncellendi" yazısı yeni
+        // isteğin cevabı sanılırdı.
+        istemci.sonHata = nil
+        istemci.sonBilgi = nil
+        istemci.adDegistir(temiz)
+        odakta = false
+    }
+}
+
+/// Kurulu sürümü gösterir, yenisi çıkmış mı diye bakar ve isteyene kurar.
 private struct SurumBolumu: View {
     @State private var denetci = GuncellemeDenetcisi()
     @State private var kopyalandi = false
@@ -126,39 +200,76 @@ private struct SurumBolumu: View {
                 Button("Güncellemeleri denetle") {
                     Task { await denetci.denetle() }
                 }
-                .disabled(denetci.durum == .denetleniyor)
+                .disabled(mesgul)
             }
 
-            if case .yeniSurumVar(let surum, let adres) = denetci.durum {
-                VStack(alignment: .leading, spacing: 8) {
-                    // Homebrew ile kurulduysa güncelleme tek komut; indirme
-                    // bağlantısı elle kuranlar için duruyor.
-                    HStack(spacing: 6) {
-                        Text(GuncellemeDenetcisi.brewKomutu)
-                            .font(.system(size: 11, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.secondary.opacity(0.12))
-                            }
-                        Button(kopyalandi ? "Kopyalandı" : "Kopyala") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(
-                                GuncellemeDenetcisi.brewKomutu, forType: .string)
-                            kopyalandi = true
+            if case .indiriliyor(let oran) = denetci.durum {
+                ProgressView(value: oran)
+                    .progressViewStyle(.linear)
+            }
+
+            if case .yeniSurumVar(let yayim) = denetci.durum {
+                yeniSurumEylemleri(yayim)
+            }
+        }
+    }
+
+    /// Denetleme veya kurulum sürerken düğmeler kilitlenir; ikinci bir indirme
+    /// başlatmak yarım kalmış kurulumun üstüne yazardı.
+    private var mesgul: Bool {
+        switch denetci.durum {
+        case .denetleniyor, .indiriliyor, .kuruluyor: true
+        default: false
+        }
+    }
+
+    @ViewBuilder
+    private func yeniSurumEylemleri(_ yayim: Yayim) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if yayim.paket != nil, denetci.kurabilir {
+                Button("\(yayim.surum) sürümüne güncelle") {
+                    Task { await denetci.guncelle() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(mesgul)
+
+                Text("Seslen kapanacak, yeni sürüm kurulacak ve kendiliğinden yeniden açılacak.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                // Kurulum yapılamıyor: ya yayımda DMG yok ya da uygulama
+                // klasörüne yazma izni yok. Elle kurmanın iki yolu da burada.
+                Text("Bu bilgisayarda uygulamayı kendiliğinden güncelleyemiyorum. Aşağıdaki komutu terminalde çalıştırabilirsiniz:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 6) {
+                    Text(GuncellemeDenetcisi.brewKomutu)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background {
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(Color.secondary.opacity(0.12))
                         }
-                        .controlSize(.small)
-                    }
-                    Button("\(surum) sürümünün sayfasını aç") {
-                        NSWorkspace.shared.open(adres)
+                    Button(kopyalandi ? "Kopyalandı" : "Kopyala") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            GuncellemeDenetcisi.brewKomutu, forType: .string)
+                        kopyalandi = true
                     }
                     .controlSize(.small)
                 }
-                .padding(.top, 2)
             }
+
+            Button("\(yayim.surum) sürümünün sayfasını aç") {
+                NSWorkspace.shared.open(yayim.sayfa)
+            }
+            .controlSize(.small)
         }
+        .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -172,10 +283,16 @@ private struct SurumBolumu: View {
             Label("En güncel sürümü kullanıyorsunuz", systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
-        case .yeniSurumVar(let surum, _):
-            Label("\(surum) sürümü çıktı", systemImage: "arrow.down.circle.fill")
+        case .yeniSurumVar(let yayim):
+            Label("\(yayim.surum) sürümü çıktı", systemImage: "arrow.down.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.blue)
+        case .indiriliyor(let oran):
+            Text("İndiriliyor… %\(Int(oran * 100))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .kuruluyor:
+            Text("Kuruluyor…").font(.caption).foregroundStyle(.secondary)
         case .hata(let mesaj):
             Label(mesaj, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
@@ -214,12 +331,27 @@ private struct UyariSekmesi: View {
                 Text("Aciliyet")
             }
 
-            Section("Ses") {
+            Section {
                 HStack {
                     Image(systemName: "speaker.fill").foregroundStyle(.secondary)
                     Slider(value: $ayarlar.sesSiddeti, in: 0...1)
                     Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("Ses şiddeti")
+            }
+
+            Section {
+                ForEach(Seviye.allCases, id: \.self) { seviye in
+                    SesSecici(seviye: seviye)
+                }
+            } header: {
+                Text("Seviye sesleri")
+            } footer: {
+                Text("Seslerin birbirinden ayrılması önemli: ekrana bakmadan hangi seviyede seslenildiğini duyabilmelisiniz.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Panel") {
@@ -248,6 +380,46 @@ private struct UyariSekmesi: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Tek bir seviyenin sesini seçer ve dinletir.
+private struct SesSecici: View {
+    let seviye: Seviye
+
+    @Environment(Ayarlar.self) private var ayarlar
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Picker(selection: Binding(
+                get: { ayarlar.ses(seviye) },
+                set: { ayarlar.sesSec(seviye, $0) }
+            )) {
+                // Gömülü sesler ayrı bölümde: listede sistem sesleriyle
+                // karışınca hangisinin Seslen'e ait olduğu anlaşılmıyor.
+                Section("Seslen sesleri") {
+                    ForEach(UyariSesi.allCases.filter(\.gomulu), id: \.self) { ses in
+                        Text(ses.baslik).tag(ses)
+                    }
+                }
+                Section("macOS sesleri") {
+                    ForEach(UyariSesi.allCases.filter { !$0.gomulu }, id: \.self) { ses in
+                        Text(ses.baslik).tag(ses)
+                    }
+                }
+            } label: {
+                Label(seviye.baslik, systemImage: seviye.simge)
+                    .foregroundStyle(seviye.renk)
+            }
+
+            Button {
+                SesCalar.onizle(ayarlar.ses(seviye), siddet: ayarlar.sesSiddeti)
+            } label: {
+                Image(systemName: "play.circle")
+            }
+            .buttonStyle(.plain)
+            .help("\(seviye.baslik) sesini dinle")
+        }
     }
 }
 

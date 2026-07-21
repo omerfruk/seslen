@@ -4,6 +4,11 @@ import UserNotifications
 
 /// Bildirim izninin durumu.
 enum BildirimIzni: Sendable, Equatable {
+    /// Sisteme henüz sorulmadı. `bilinmiyor`'dan farkı önemli: o "kullanıcıya
+    /// sorulmamış" demek ve uyarı gerektirir, bu ise "biz daha bakmadık".
+    /// Ayrılmasaydı, izni çoktan vermiş kullanıcı da uygulama açıldıktan sonra
+    /// menüyü ilk açtığında bir an turuncu uyarı şeridi görürdü.
+    case sorgulanmadi
     case bilinmiyor
     case verildi
     case reddedildi
@@ -12,6 +17,7 @@ enum BildirimIzni: Sendable, Equatable {
 
     var aciklama: String {
         switch self {
+        case .sorgulanmadi: "Denetleniyor…"
         case .bilinmiyor: "Henüz sorulmadı"
         case .verildi: "İzin verildi"
         case .reddedildi: "İzin reddedildi"
@@ -32,7 +38,15 @@ final class UyariYoneticisi {
     /// Henüz yanıtlanmamış seslenmeler (menüde rozet olarak gösterilir).
     private(set) var okunmamis: [Seslenme] = []
     /// Bildirim izninin son bilinen durumu.
-    private(set) var bildirimIzni: BildirimIzni = .bilinmiyor
+    private(set) var bildirimIzni: BildirimIzni = .sorgulanmadi
+
+    /// Kullanıcıyı uyarmak gerekiyor mu?
+    ///
+    /// `kullanilamaz` sayılmaz: geliştirme kipinde bildirim zaten mümkün değil
+    /// ve düzeltilecek bir şey yok — çözümü olmayan uyarı yalnızca gürültüdür.
+    var bildirimIzniEksik: Bool {
+        bildirimIzni == .bilinmiyor || bildirimIzni == .reddedildi
+    }
 
     /// Panelde bir yanıt düğmesine basıldığında çağrılır.
     var yanitVerildi: ((_ cagriID: String, _ yanit: Yanit) -> Void)?
@@ -55,7 +69,7 @@ final class UyariYoneticisi {
 
     init(ayarlar: Ayarlar) {
         self.ayarlar = ayarlar
-        bildirimIzni = Bundle.main.bundleIdentifier == nil ? .kullanilamaz : .bilinmiyor
+        bildirimIzni = Bundle.main.bundleIdentifier == nil ? .kullanilamaz : .sorgulanmadi
         balon.oySecildi = { [weak self] anketID, secenek in
             self?.anketOyuVerildi?(anketID, secenek)
         }
@@ -87,7 +101,7 @@ final class UyariYoneticisi {
             bildirimGonder(seslenme)
         }
         if bicim.ses {
-            SesCalar.cal(seviye: seslenme.seviye, siddet: ayarlar.sesSiddeti)
+            SesCalar.cal(seviye: seslenme.seviye, ayarlar: ayarlar)
         }
         if bicim.kenar {
             kenarFlasi.goster(sure: seslenme.seviye == .acil ? 4 : 2)
@@ -120,7 +134,7 @@ final class UyariYoneticisi {
             anketBildirimi(veri)
         }
         if bicim.ses {
-            SesCalar.cal(seviye: .normal, siddet: ayarlar.sesSiddeti)
+            SesCalar.cal(seviye: .normal, ayarlar: ayarlar)
         }
         // Anketler `okunmamis` dizisine girmez: o dizi yanıtlanabilir çağrılar
         // içindir ve `okunduIsaretle(cagriID)` ile temizlenir. Anketi karıştırmak
@@ -193,7 +207,7 @@ final class UyariYoneticisi {
             taciz.tazele(grup)
             return
         }
-        taciz.goster(grup: grup, siddet: ayarlar.sesSiddeti) { [weak self] yanit in
+        taciz.goster(grup: grup, ses: ayarlar.ses(.taciz), siddet: ayarlar.sesSiddeti) { [weak self] yanit in
             self?.tacizYanitlandi(yanit)
         }
     }

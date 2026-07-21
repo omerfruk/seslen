@@ -9,7 +9,9 @@ enum MesajTipi: String, Codable, Sendable {
     case haykir
     case yanitla
     case durumBildir = "durum_bildir"
+    case adDegistir = "ad_degistir"
     case uyeGuncelle = "uye_guncelle"
+    case uyeAdGuncelle = "uye_ad_guncelle"
     case uyeOnayla = "uye_onayla"
     case uyeSil = "uye_sil"
     case kodYenile = "kod_yenile"
@@ -57,10 +59,23 @@ struct DurumBildirIstek: Encodable, Sendable {
     var durum: Durum
 }
 
+/// Üye kimliği taşımaz: kimin adının değiştiği bağlantıdan bilinir.
+struct AdDegistirIstek: Encodable, Sendable {
+    var adSoyad: String
+}
+
 struct UyeGuncelleIstek: Encodable, Sendable {
     var uyeID: String
     var rol: Rol
     var maxSeviye: Seviye
+}
+
+/// Yöneticinin başkasının adını düzeltmesi. Kendi adı için `AdDegistirIstek`
+/// kullanılır: kimlik taşımayan istek başkasına dokunma ihtimalini baştan yok
+/// eder, bu istek ise sunucuda yönetim kontrolünden geçer.
+struct UyeAdGuncelleIstek: Encodable, Sendable {
+    var uyeID: String
+    var adSoyad: String
 }
 
 struct UyeIDIstek: Encodable, Sendable {

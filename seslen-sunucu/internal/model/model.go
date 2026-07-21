@@ -4,6 +4,9 @@ package model
 import (
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Seviye, bir seslenmenin aciliyetini belirtir.
@@ -105,6 +108,78 @@ type Uye struct {
 
 	// Cevrimici, veritabanında tutulmaz; hub tarafından anlık doldurulur.
 	Cevrimici bool `json:"cevrimici"`
+}
+
+// Ad uzunluk sınırları. Üst sınır listedeki satırın taşmaması içindir; alt
+// sınır tek harflik adın kimseyi tanıtmamasından.
+const (
+	minAdUzunlugu  = 2
+	maksAdUzunlugu = 40
+)
+
+// AdDuzelt, kullanıcının yazdığı adı normalleştirir ve kabul edilebilir olup
+// olmadığını söyler.
+//
+// Uzunluk bayta değil harfe göre ölçülür — Türkçe harfler iki bayt tutuyor ve
+// bayt saymak "Şükrü Güngör"ü sebepsiz reddederdi.
+func AdDuzelt(ham string) (string, bool) {
+	// Önce birleşik biçim. macOS'tan (Finder, dosya adları) kopyalanan metin
+	// ayrık gelir: "Ö" = O + U+0308. Normalleştirilmezse aynı ad iki farklı
+	// bayt dizisi olarak saklanır ve benzersizlik kontrolünden kaçar.
+	ad := norm.NFC.String(ham)
+
+	// Görünmez karakterler ayıklanır. Sıfır genişlikli boşluk (U+200B) içeren
+	// bir ad ekranda mevcut bir üyeyle **birebir aynı** görünür; süzülmezse
+	// isim benzersizliği tek karakterle tamamen atlatılabilir. Yön değiştirme
+	// işaretleri (U+202E) ise satırın kalanını ters çizdirir.
+	ad = strings.Map(func(r rune) rune {
+		// Boşluk sayılanlar ayıklanmaz, düz boşluğa çevrilir: satır sonu ya da
+		// sekme bir *ayırıcıdır*, silinseydi "Ali\nVeli" → "AliVeli" olurdu.
+		// U+200B bu dalın dışında kalır — Unicode onu boşluk saymaz, biçim
+		// karakteri sayar; aşağıdaki kol yakalar.
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if unicode.Is(unicode.Cf, r) || !unicode.IsGraphic(r) {
+			return -1
+		}
+		return r
+	}, ad)
+
+	// Boşluklar toplanır: "Ali   Veli" ile "Ali Veli" listede iki ayrı isim
+	// gibi durur ve yine benzersizlik kontrolünü atlatırdı.
+	ad = strings.Join(strings.Fields(ad), " ")
+
+	harfler := []rune(ad)
+	if len(harfler) < minAdUzunlugu || len(harfler) > maksAdUzunlugu {
+		return "", false
+	}
+	// En az bir harf şart: "12", "!!" ya da yalnızca emoji kimseyi tanıtmaz ve
+	// hata metni de zaten "harf" diyor.
+	if !strings.ContainsFunc(ad, unicode.IsLetter) {
+		return "", false
+	}
+	return ad, true
+}
+
+// adDegistirici, isim anahtarındaki Türkçeye özgü harf çevrimi.
+//
+// Paket düzeyinde: `isimDolu` her üye için bir kez `AdAnahtari` çağırıyor,
+// çeviriciyi her seferinde yeniden kurmanın anlamı yok.
+//
+// Yalnızca `I` var. `İ` gerekmiyor çünkü Go'nun `ToLower`'ı onu zaten tek rune
+// hâlinde `i`'ye çeviriyor; `I` ise İngilizce kuralla `i` olurdu ve "Işıl" ile
+// "ışıl" farklı anahtarlar üretirdi.
+var adDegistirici = strings.NewReplacer("I", "ı")
+
+// AdAnahtari, iki adın "aynı isim" sayılıp sayılmayacağını karşılaştırmak için
+// kullanılan normal biçimi üretir.
+//
+// SQLite'ın `LOWER()`'ı yalnızca ASCII çevirir: "Ömer" ile "ömer" onun gözünde
+// iki ayrı isimdir ve isim benzersizliği Türkçe adlarda hiç çalışmaz. Bu yüzden
+// karşılaştırma veritabanında değil burada yapılır.
+func AdAnahtari(ad string) string {
+	return strings.ToLower(adDegistirici.Replace(norm.NFC.String(ad)))
 }
 
 // Cagri, gönderilmiş bir seslenmenin kaydıdır.

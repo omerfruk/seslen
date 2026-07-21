@@ -14,17 +14,19 @@ type Tip string
 
 // İstemciden sunucuya giden mesaj tipleri.
 const (
-	TipSeslen      Tip = "seslen"       // birine seslen
-	TipHaykir      Tip = "haykir"       // kurumdaki herkese birden seslen
-	TipYanitla     Tip = "yanitla"      // gelen çağrıya yanıt ver
-	TipDurumBildir Tip = "durum_bildir" // kendi durumunu değiştir
-	TipUyeGuncelle Tip = "uye_guncelle" // (yönetim) üye rolü/yetkisi değiştir
-	TipUyeOnayla   Tip = "uye_onayla"   // (yönetim) bekleyen üyeyi onayla
-	TipUyeSil      Tip = "uye_sil"      // (yönetim) üyeyi kurumdan çıkar
-	TipKodYenile   Tip = "kod_yenile"   // (yönetim) katılım kodunu yenile
-	TipAnket       Tip = "anket"        // kuruma çoktan seçmeli soru sor
-	TipAnketOy     Tip = "anket_oy"     // ankete oy ver (veya oyu değiştir)
-	TipAnketBitir  Tip = "anket_bitir"  // kendi anketini süresi dolmadan kapat
+	TipSeslen        Tip = "seslen"          // birine seslen
+	TipHaykir        Tip = "haykir"          // kurumdaki herkese birden seslen
+	TipYanitla       Tip = "yanitla"         // gelen çağrıya yanıt ver
+	TipDurumBildir   Tip = "durum_bildir"    // kendi durumunu değiştir
+	TipAdDegistir    Tip = "ad_degistir"     // kendi görünen adını değiştir
+	TipUyeGuncelle   Tip = "uye_guncelle"    // (yönetim) üye rolü/yetkisi değiştir
+	TipUyeAdGuncelle Tip = "uye_ad_guncelle" // (yönetim) üyenin görünen adını düzelt
+	TipUyeOnayla     Tip = "uye_onayla"      // (yönetim) bekleyen üyeyi onayla
+	TipUyeSil        Tip = "uye_sil"         // (yönetim) üyeyi kurumdan çıkar
+	TipKodYenile     Tip = "kod_yenile"      // (yönetim) katılım kodunu yenile
+	TipAnket         Tip = "anket"           // kuruma çoktan seçmeli soru sor
+	TipAnketOy       Tip = "anket_oy"        // ankete oy ver (veya oyu değiştir)
+	TipAnketBitir    Tip = "anket_bitir"     // kendi anketini süresi dolmadan kapat
 	// TipAnketGecmisiIste, geçmiş anketleri talep eder. Bağlanışta kendiliğinden
 	// gönderilmez: liste yalnızca kullanıcı geçmiş ekranını açınca gerekir.
 	TipAnketGecmisiIste Tip = "anket_gecmisi_iste"
@@ -81,11 +83,31 @@ type DurumBildirIstek struct {
 	Durum model.Durum `json:"durum"`
 }
 
+// AdDegistirIstek, kullanıcının kendi görünen adını değiştirir.
+//
+// Üye kimliği taşımaz: kimin adının değiştiği bağlantıdan bilinir. Alan
+// olsaydı istemci başkasının kimliğini yazabilir, sunucu da her istekte bunu
+// ayrıca reddetmek zorunda kalırdı — taşınmayan alan doğrulanmayı da gerektirmez.
+type AdDegistirIstek struct {
+	AdSoyad string `json:"adSoyad"`
+}
+
 // UyeGuncelleIstek, bir üyenin rolünü ve gönderebileceği en yüksek seviyeyi ayarlar.
 type UyeGuncelleIstek struct {
 	UyeID     string       `json:"uyeID"`
 	Rol       model.Rol    `json:"rol"`
 	MaxSeviye model.Seviye `json:"maxSeviye"`
+}
+
+// UyeAdGuncelleIstek, yöneticinin bir üyenin görünen adını düzeltmesi içindir.
+//
+// AdDegistirIstek'e kimlik alanı eklemek yerine ayrı bir tip olması kasıtlı:
+// oradaki "hedef bağlantıdan okunur" güvencesi tam da alanın yokluğundan
+// geliyor. Yetki isteyen işlem kendi kapısından girer ve yonetimDogrula'nın
+// kontrollerine tabi olur.
+type UyeAdGuncelleIstek struct {
+	UyeID   string `json:"uyeID"`
+	AdSoyad string `json:"adSoyad"`
 }
 
 // UyeIDIstek, tek bir üyeyi hedefleyen basit işlemler için kullanılır.

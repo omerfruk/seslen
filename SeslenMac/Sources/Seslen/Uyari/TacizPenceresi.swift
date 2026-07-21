@@ -18,16 +18,18 @@ final class TacizPenceresi {
     private var pencere: NSWindow?
     private var barindirici: NSHostingView<TacizGorunumu>?
     private var yanitlandiGeri: ((Yanit) -> Void)?
+    private var ses: UyariSesi = .alarm
     private var siddet: Double = 0.8
 
     /// Pencere şu anda ekranda mı?
     var acik: Bool { pencere != nil }
 
     /// Pencereyi açar ve alarmı başlatır.
-    func goster(grup: SeslenmeGrubu, siddet: Double, yanitlandi: @escaping (Yanit) -> Void) {
+    func goster(grup: SeslenmeGrubu, ses: UyariSesi, siddet: Double, yanitlandi: @escaping (Yanit) -> Void) {
         kapat()
 
         yanitlandiGeri = yanitlandi
+        self.ses = ses
         self.siddet = siddet
 
         let barindirici = NSHostingView(rootView: gorunum(grup))
@@ -54,7 +56,7 @@ final class TacizPenceresi {
         self.barindirici = barindirici
         self.pencere = pencere
 
-        SesCalar.tacizBaslat(siddet: siddet)
+        SesCalar.tacizBaslat(ses, siddet: siddet)
     }
 
     /// Açık pencerenin içeriğini tazeler. Aynı kişiden yeni bir taciz çağrısı
