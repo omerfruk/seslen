@@ -650,6 +650,68 @@ func TestAnketGecmisi(t *testing.T) {
 	}
 }
 
+// TestCagriGecmisi, geçmişin hem gelen hem giden seslenmeleri yanıtlarıyla
+// birlikte taşıdığını ve başkalarının çağrılarını sızdırmadığını doğrular.
+func TestCagriGecmisi(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	// Ömer → Ali, Ali yanıtlıyor.
+	k.omer.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: k.aliID, Seviye: model.SeviyeAcil, Not: "neredesin",
+	})
+	zarf := k.ali.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+	var gelen protokol.SeslenmeGeldiVeri
+	json.Unmarshal(zarf.Veri, &gelen)
+	k.ali.yolla(protokol.TipYanitla, protokol.YanitlaIstek{
+		CagriID: gelen.CagriID, Yanit: model.YanitGeliyorum,
+	})
+	k.omer.bekle(protokol.TipYanitGeldi, 2*time.Second)
+
+	// Ali → Ömer, yanıtsız kalıyor.
+	k.ali.yolla(protokol.TipSeslen, protokol.SeslenIstek{
+		AliciID: k.omerID, Seviye: model.SeviyeNormal, Not: "kahve?",
+	})
+	k.omer.bekle(protokol.TipSeslenmeGeldi, 2*time.Second)
+
+	k.ali.yolla(protokol.TipCagriGecmisiIste, nil)
+	zarf = k.ali.bekle(protokol.TipCagriGecmisi, 2*time.Second)
+	var gecmis protokol.CagriGecmisiVeri
+	json.Unmarshal(zarf.Veri, &gecmis)
+
+	if len(gecmis.Cagrilar) != 2 {
+		t.Fatalf("2 çağrı beklenirdi (biri gelen biri giden), gelen: %d", len(gecmis.Cagrilar))
+	}
+	// Yeniden eskiye: Ali'nin gönderdiği önce gelmeli.
+	giden, alinan := gecmis.Cagrilar[0], gecmis.Cagrilar[1]
+	if giden.GonderenID != k.aliID || giden.AliciAd != "Ömer" {
+		t.Errorf("ilk satır Ali→Ömer olmalıydı, gelen: %+v", giden)
+	}
+	if giden.Yanit != "" {
+		t.Errorf("yanıtsız çağrının yanıtı boş olmalıydı, gelen: %q", giden.Yanit)
+	}
+	if alinan.GonderenAd != "Ömer" || alinan.Seviye != model.SeviyeAcil {
+		t.Errorf("ikinci satır Ömer'in ACİL çağrısı olmalıydı, gelen: %+v", alinan)
+	}
+	if alinan.Yanit != model.YanitGeliyorum || alinan.YanitTarih == 0 {
+		t.Errorf("yanıt ve zamanı taşınmalıydı, gelen: %q / %d", alinan.Yanit, alinan.YanitTarih)
+	}
+
+	// Başka kurumdaki biri bu çağrıların hiçbirini görmemeli.
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "Başka Şirket", "kurucuAd": "Yabancı",
+	})
+	yabanci := o.baglan(yanit["token"].(string), yanit["ben"].(map[string]any)["id"].(string))
+	yabanci.bekle(protokol.TipDurumTam, 2*time.Second)
+	yabanci.yolla(protokol.TipCagriGecmisiIste, nil)
+	zarf = yabanci.bekle(protokol.TipCagriGecmisi, 2*time.Second)
+	var yabanciGecmis protokol.CagriGecmisiVeri
+	json.Unmarshal(zarf.Veri, &yabanciGecmis)
+	if len(yabanciGecmis.Cagrilar) != 0 {
+		t.Errorf("başkasının çağrıları sızmamalıydı, gelen: %d", len(yabanciGecmis.Cagrilar))
+	}
+}
+
 // TestAnketKurumSiniri, başka kurumun anketine oy verilemediğini doğrular.
 func TestAnketKurumSiniri(t *testing.T) {
 	o := ortamKur(t)

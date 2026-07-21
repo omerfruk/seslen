@@ -61,6 +61,8 @@ func (h *Hub) mesajIsle(b *Baglanti, zarf protokol.Zarf) {
 		h.anketBitirIsle(b, zarf.Veri)
 	case protokol.TipAnketGecmisiIste:
 		h.anketGecmisiIsle(b)
+	case protokol.TipCagriGecmisiIste:
+		h.cagriGecmisiIsle(b)
 	case protokol.TipNabiz:
 		mesaj, _ := protokol.Paketle(protokol.TipNabizYanit, nil)
 		b.Yolla(mesaj)
@@ -570,6 +572,65 @@ func (h *Hub) anketBitirIsle(b *Baglanti, ham json.RawMessage) {
 
 	anket.Kapandi = true
 	h.anketSonucuYayinla(anket)
+}
+
+// cagriGecmisiSiniri, geçmiş ekranında kaç seslenmenin gösterileceğidir.
+// Anket geçmişinden yüksek: seslenme çok daha sık bir olay.
+const cagriGecmisiSiniri = 50
+
+// cagriGecmisiIsle, üyenin aldığı ve gönderdiği son seslenmeleri yollar.
+func (h *Hub) cagriGecmisiIsle(b *Baglanti) {
+	cagrilar, err := h.depo.SonCagrilar(b.uyeID, cagriGecmisiSiniri)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "seslenme geçmişi okunamadı")
+		return
+	}
+
+	// Adlar tek sorgudan çözülür; çağrı başına UyeGetir çağırmak 50 satır için
+	// 100 sorgu demek olurdu.
+	uyeler, err := h.depo.UyeleriGetir(b.kurumID)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "üyeler okunamadı")
+		return
+	}
+	adlar := make(map[string]string, len(uyeler))
+	for _, uye := range uyeler {
+		adlar[uye.ID] = uye.AdSoyad
+	}
+	// Kurumdan çıkarılmış üyenin çağrıları listede kalır; adı çözülemediğinde
+	// satırı atmak yerine böyle yazıyoruz, yoksa geçmişte açıklanamayan
+	// boşluklar oluşurdu.
+	ad := func(uyeID string) string {
+		if bulunan, varsa := adlar[uyeID]; varsa {
+			return bulunan
+		}
+		return "ayrılmış üye"
+	}
+
+	satirlar := make([]protokol.CagriGecmisSatiri, 0, len(cagrilar))
+	for _, c := range cagrilar {
+		satir := protokol.CagriGecmisSatiri{
+			CagriID:    c.ID,
+			GonderenID: c.GonderenID,
+			GonderenAd: ad(c.GonderenID),
+			AliciID:    c.AliciID,
+			AliciAd:    ad(c.AliciID),
+			Seviye:     c.Seviye,
+			Not:        c.Not,
+			Gonderildi: c.Gonderildi.Unix(),
+			Yanit:      c.Yanit,
+		}
+		if !c.YanitTarih.IsZero() {
+			satir.YanitTarih = c.YanitTarih.Unix()
+		}
+		satirlar = append(satirlar, satir)
+	}
+
+	mesaj, err := protokol.Paketle(protokol.TipCagriGecmisi, protokol.CagriGecmisiVeri{Cagrilar: satirlar})
+	if err != nil {
+		return
+	}
+	b.Yolla(mesaj)
 }
 
 // anketGecmisiSiniri, geçmiş ekranında kaç anketin gösterileceğidir. Sabit sayı

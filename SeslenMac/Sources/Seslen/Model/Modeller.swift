@@ -282,6 +282,38 @@ extension BalonOgesi {
 
 }
 
+/// Geçmiş listesindeki tek bir seslenme.
+struct GecmisSeslenme: Identifiable, Sendable, Equatable {
+    var id: String
+    var gonderenID: String
+    var gonderenAd: String
+    var aliciAd: String
+    var seviye: Seviye
+    var not: String
+    var gonderildi: Date
+    /// Yanıtsız kaldıysa nil.
+    var yanit: Yanit?
+
+    init(_ satir: CagriGecmisSatiri) {
+        id = satir.cagriID
+        gonderenID = satir.gonderenID
+        gonderenAd = satir.gonderenAd
+        aliciAd = satir.aliciAd
+        seviye = satir.seviye
+        not = satir.not
+        gonderildi = Date(timeIntervalSince1970: TimeInterval(satir.gonderildi))
+        yanit = Yanit(rawValue: satir.yanit)
+    }
+
+    /// Bu çağrıyı biz mi gönderdik?
+    func giden(benimID: String?) -> Bool { gonderenID == benimID }
+
+    /// Listede yazılacak karşı taraf: gelen çağrıda gönderen, gidende alıcı.
+    func karsiTaraf(benimID: String?) -> String {
+        giden(benimID: benimID) ? aliciAd : gonderenAd
+    }
+}
+
 /// Kuruma sorulmuş çoktan seçmeli soru ve güncel sonucu.
 struct Anket: Identifiable, Sendable, Equatable {
     var id: String

@@ -28,6 +28,8 @@ const (
 	// TipAnketGecmisiIste, geçmiş anketleri talep eder. Bağlanışta kendiliğinden
 	// gönderilmez: liste yalnızca kullanıcı geçmiş ekranını açınca gerekir.
 	TipAnketGecmisiIste Tip = "anket_gecmisi_iste"
+	// TipCagriGecmisiIste, alınan ve gönderilen son seslenmeleri talep eder.
+	TipCagriGecmisiIste Tip = "cagri_gecmisi_iste"
 	TipNabiz            Tip = "nabiz" // bağlantı canlılık kontrolü
 )
 
@@ -43,6 +45,7 @@ const (
 	TipAnketSonuc    Tip = "anket_sonuc"    // anketin güncel durumu (durum)
 	TipAcikAnketler  Tip = "acik_anketler"  // bağlanınca: hâlâ açık olanlar
 	TipAnketGecmisi  Tip = "anket_gecmisi"  // istenince: bitmişler dahil son anketler
+	TipCagriGecmisi  Tip = "cagri_gecmisi"  // istenince: alınan ve gönderilen son seslenmeler
 	TipNabizYanit    Tip = "nabiz_yanit"    // nabız cevabı
 )
 
@@ -218,6 +221,29 @@ type AcikAnketlerVeri struct {
 // kapansa da durur.
 type AnketGecmisiVeri struct {
 	Anketler []AnketSonucVeri `json:"anketler"`
+}
+
+// CagriGecmisSatiri, geçmişteki tek bir seslenmedir.
+//
+// Hem gönderen hem alıcı adını taşır: liste iki yönü birlikte gösterdiği için
+// istemcinin "bu bana mı geldi, ben mi gönderdim" ayrımını yapabilmesi gerekir.
+type CagriGecmisSatiri struct {
+	CagriID    string       `json:"cagriID"`
+	GonderenID string       `json:"gonderenID"`
+	GonderenAd string       `json:"gonderenAd"`
+	AliciID    string       `json:"aliciID"`
+	AliciAd    string       `json:"aliciAd"`
+	Seviye     model.Seviye `json:"seviye"`
+	Not        string       `json:"not"`
+	Gonderildi int64        `json:"gonderildi"`
+	// Yanit boşsa çağrı yanıtsız kalmıştır.
+	Yanit      string `json:"yanit"`
+	YanitTarih int64  `json:"yanitTarih"`
+}
+
+// CagriGecmisiVeri, üyenin aldığı ve gönderdiği son seslenmeleri taşır.
+type CagriGecmisiVeri struct {
+	Cagrilar []CagriGecmisSatiri `json:"cagrilar"`
 }
 
 // BilgiVeri, reddedilmemiş ama kullanıcıya söylenmesi gereken bir durumu taşır.

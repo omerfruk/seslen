@@ -566,6 +566,42 @@ func (s *Store) TeslimEdilmemisCagrilar(aliciID string) ([]model.Cagri, error) {
 	return liste, satirlar.Err()
 }
 
+// SonCagrilar, üyenin aldığı ve gönderdiği son çağrıları yeniden eskiye döner.
+//
+// Teslim durumuna bakmaz: kuyrukta bekleyen bir çağrı da geçmişin parçasıdır.
+// Yalnızca kendi çağrıları gelir — kimse başkalarının yazışmasını görmez.
+func (s *Store) SonCagrilar(uyeID string, sinir int) ([]model.Cagri, error) {
+	satirlar, err := s.db.Query(
+		`SELECT id, kurum_id, gonderen_id, alici_id, seviye, not_metni, gonderildi, yanit, yanit_tarih
+		 FROM cagrilar
+		 WHERE alici_id = ? OR gonderen_id = ?
+		 ORDER BY gonderildi DESC, rowid DESC LIMIT ?`,
+		uyeID, uyeID, sinir,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer satirlar.Close()
+
+	var liste []model.Cagri
+	for satirlar.Next() {
+		var c model.Cagri
+		var gonderildi, yanitTarih int64
+		if err := satirlar.Scan(
+			&c.ID, &c.KurumID, &c.GonderenID, &c.AliciID, &c.Seviye,
+			&c.Not, &gonderildi, &c.Yanit, &yanitTarih,
+		); err != nil {
+			return nil, err
+		}
+		c.Gonderildi = time.Unix(gonderildi, 0)
+		if yanitTarih > 0 {
+			c.YanitTarih = time.Unix(yanitTarih, 0)
+		}
+		liste = append(liste, c)
+	}
+	return liste, satirlar.Err()
+}
+
 // BekleyenCagriSayisi, üyenin kuyruğunda bekleyen çağrı adedini verir.
 //
 // WHERE koşulu TeslimEdilmemisCagrilar ile birebir aynı olmalıdır; ayrışırsa
@@ -692,7 +728,9 @@ func (s *Store) AcikAnketler(kurumID string, simdi time.Time) ([]model.Anket, er
 // Geçmiş ekranı bunu kullanır; açık olanlar için AcikAnketler ayrıdır.
 func (s *Store) SonAnketler(kurumID string, sinir int) ([]model.Anket, error) {
 	satirlar, err := s.db.Query(
-		anketSecim+` WHERE kurum_id = ? ORDER BY gonderildi DESC LIMIT ?`,
+		// rowid ikincil sıra: aynı saniyede açılan iki anketin sırası yoksa
+		// belirsiz kalır ve liste her sorguda farklı dizilebilir.
+		anketSecim+` WHERE kurum_id = ? ORDER BY gonderildi DESC, rowid DESC LIMIT ?`,
 		kurumID, sinir,
 	)
 	if err != nil {

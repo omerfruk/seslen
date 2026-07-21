@@ -65,10 +65,21 @@ hiçbir hata mesajı çıkmaz. `dagitim/simge-dogrula.swift` paketleme sırasın
 tüm adları tarar; bu adım atlanmamalı. (Bu hata bir kez yaşandı:
 `megaphone.badge.xmark` diye bir simge yok.)
 
-Betik iki biçimi tarar: `systemName:`/`systemImage:` gibi doğrudan kullanımlar
-ve `Seviye.simge` gibi **gövdesi olan `simge` özelliklerinin** içindeki çıplak
-dizgiler. İkincisi olmadan `Image(systemName: seviye.simge)` biçimindeki
-kullanımlar hiç denetlenmiyordu — tarihî hata da tam olarak oradaydı.
+Betik üç biçimi tarar:
+
+1. `systemName:`/`systemImage:`/`systemSymbolName:` çağrılarının argümanı —
+   dizgi doğrudan değil, **kapanış parantezine kadarki metinden** çıkarılır.
+   Böylece `Image(systemName: kosul ? "a" : "b")` gibi üçlü koşulların içindeki
+   adlar da denetlenir. Eskiden dizgi iki noktadan hemen sonra beklenirdi ve bu
+   biçim gözden kaçıyordu. Parantezde durmak kasıtlı: satırın tamamı alınsaydı
+   `Image(systemName: "x").help("Bir şey")` satırındaki "Bir şey" simge sanılır
+   ve paketleme uydurma bir hatayla dururdu.
+2. `Seviye.simge` gibi **gövdesi olan `simge` özelliklerinin** içindeki çıplak
+   dizgiler. Bu olmadan `Image(systemName: seviye.simge)` hiç denetlenmiyordu —
+   tarihî hata tam olarak oradaydı.
+3. Süslü parantez şartı sayesinde `BalonOgesi.simge` gibi **saklanan**
+   özellikler blok başlangıcı sayılmaz; sayılsaydı tarama dosyanın geri kalanına
+   taşıp alakasız dizgileri simge sanardı.
 
 **4. Teslim edilemeyen çağrı kaybolmaz.**
 Alıcı çevrimdışıysa çağrı `cagrilar.teslim_tarih = 0` olarak bekler ve üye
@@ -204,11 +215,32 @@ kapatılan kartı geri getirmesin.
 gözden uzak tutmak istenirken kapanışta ekrana bir şey çıkarmak, giderilmeye
 çalışılan gürültünün ta kendisi olurdu. Sonucu merak eden geçmişe bakar.
 
-**Geçmiş istenince çekilir** (`TipAnketGecmisiIste`), bağlanışta değil — liste
-yalnızca ekran açılınca gerekiyor. Son `anketGecmisiSiniri` (20) anket gelir;
-sabit sayı tarih aralığına yeğlendi, çünkü tarih sınırı yoğun bir günde uzun,
-sakin bir haftada boş liste üretir. Anketler ve oylar SQLite'ta kalıcı olduğu
-için geçmiş uygulama kapansa da durur.
+## Geçmiş
+
+Seslenme ve anket geçmişi tek ekranda (`Gorunum/Gecmis.swift`), iki sekmede.
+Ayrı düğmeler eklemek panelin üst şeridini kalabalıklaştırırdı.
+
+İkisi de **istenince** çekilir (`TipAnketGecmisiIste`, `TipCagriGecmisiIste`),
+bağlanışta değil: liste yalnızca ekran açılınca gerekiyor, her oturumda
+indirmenin anlamı yok. Sınırlar `anketGecmisiSiniri` (20) ve
+`cagriGecmisiSiniri` (50) — seslenme çok daha sık bir olay. Sabit sayı tarih
+aralığına yeğlendi: tarih sınırı yoğun bir günde uzun, sakin bir haftada boş
+liste üretir.
+
+Veri zaten kalıcıydı; yalnızca sorgu ve mesaj çiftleri eklendi. Bu yüzden
+geçmiş uygulama kapansa da durur.
+
+**Sıralama `gonderildi DESC, rowid DESC`.** İkincil sıra şart: zaman saniye
+çözünürlüğünde tutuluyor ve aynı saniyede oluşan iki kayıt yoksa belirsiz
+sıralanır, liste her sorguda farklı dizilebilir.
+
+Seslenme geçmişi gelen ve gideni tek listede yön okuyla gösterir. Giden de
+gösterilir çünkü gönderen yalnızca geçici bir balon görüyor; "Ali'ye seslenmiş
+miydim, yanıtladı mı" sorusunun başka cevabı yok. Yalnızca kendi çağrılarınız
+gelir (`SonCagrilar` hem alıcı hem gönderen olarak süzer).
+
+Kurumdan çıkarılmış üyenin çağrıları listede kalır, adı "ayrılmış üye" yazılır;
+satırı atmak geçmişte açıklanamayan boşluklar bırakırdı.
 
 Özet (`Anket.ozet`) `acik` olmayan her ankette gösterilir, yalnızca `kapandi`
 bayrağında değil — anketlerin çoğu elle kapatılarak değil süresi dolarak biter.

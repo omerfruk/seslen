@@ -14,9 +14,19 @@ import Foundation
 let kaynakYolu = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "SeslenMac/Sources"
 let kok = URL(fileURLWithPath: kaynakYolu)
 
-/// `systemName: "..."`, `systemImage: "..."` ve `systemSymbolName: "..."` yakalar.
+/// `systemName:` / `systemImage:` / `systemSymbolName:` çağrılarının argümanını
+/// yakalar — dizgiyi doğrudan değil, kapanış parantezine kadarki metni alır.
+///
+/// Sebep: eskiden desen dizgiyi iki noktadan hemen sonra beklerdi ve
+/// `Image(systemName: giden ? "ok.yukari" : "ok.asagi")` biçimindeki üçlü
+/// koşulların içindeki adlar hiç denetlenmezdi. Aradaki her ifadeyi geçmek
+/// gerekiyor.
+///
+/// Parantezde durmak kasıtlı: satırın tamamı alınsaydı
+/// `Image(systemName: "x").help("Bir şey")` satırındaki "Bir şey" de simge
+/// sanılır ve paketleme uydurma bir hatayla dururdu.
 let desen = try! NSRegularExpression(
-    pattern: #"system(?:Name|Image|SymbolName):\s*"([^"]+)""#
+    pattern: #"system(?:Name|Image|SymbolName):([^)\n]*)"#
 )
 
 /// `simge` özelliklerinin gövdesindeki çıplak dizgileri yakalar.
@@ -86,8 +96,14 @@ for durum in gezgin {
 
     let aralik = NSRange(icerik.startIndex..., in: icerik)
     for eslesme in desen.matches(in: icerik, range: aralik) {
-        if let r = Range(eslesme.range(at: 1), in: icerik) {
-            adlar.insert(String(icerik[r]))
+        guard let r = Range(eslesme.range(at: 1), in: icerik) else { continue }
+        // Argüman metnindeki her dizgi bir aday: üçlü koşulda iki ad birden olur.
+        let arguman = String(icerik[r])
+        let argAralik = NSRange(arguman.startIndex..., in: arguman)
+        for dizgi in dizgiDeseni.matches(in: arguman, range: argAralik) {
+            if let dr = Range(dizgi.range(at: 1), in: arguman) {
+                adlar.insert(String(arguman[dr]))
+            }
         }
     }
     adlar.formUnion(simgeAdlariniTopla(icerik))

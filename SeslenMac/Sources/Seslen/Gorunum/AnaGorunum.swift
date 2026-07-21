@@ -14,8 +14,8 @@ struct AnaGorunum: View {
     @State private var haykirmaAcik = false
     /// Anket oluşturma ekranı açık mı?
     @State private var anketAcik = false
-    /// Anket geçmişi ekranı açık mı?
-    @State private var anketGecmisiAcik = false
+    /// Geçmiş ekranı (seslenmeler + anketler) açık mı?
+    @State private var gecmisAcik = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,8 +29,8 @@ struct AnaGorunum: View {
                 HaykirHazirla { haykirmaAcik = false }
             } else if anketAcik {
                 AnketHazirla { anketAcik = false }
-            } else if anketGecmisiAcik {
-                AnketGecmisi { anketGecmisiAcik = false }
+            } else if gecmisAcik {
+                Gecmis { gecmisAcik = false }
             } else {
                 kisiListesi
             }
@@ -144,9 +144,9 @@ struct AnaGorunum: View {
 
             Divider().frame(height: 18)
 
-            // Geçmiş "Anket aç"ın yanında: biten anketi arayan buraya bakar.
+            // Tek geçmiş girişi: hem biten anketler hem eski seslenmeler burada.
             Button {
-                anketGecmisiAcik = true
+                gecmisAcik = true
             } label: {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 12))
@@ -156,7 +156,7 @@ struct AnaGorunum: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.teal)
-            .help("Anket geçmişi")
+            .help("Geçmiş")
         }
         .padding(.vertical, 2)
     }

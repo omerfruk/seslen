@@ -17,6 +17,7 @@ enum MesajTipi: String, Codable, Sendable {
     case anketOy = "anket_oy"
     case anketBitir = "anket_bitir"
     case anketGecmisiIste = "anket_gecmisi_iste"
+    case cagriGecmisiIste = "cagri_gecmisi_iste"
     case nabiz
 
     // Sunucu → İstemci
@@ -30,6 +31,7 @@ enum MesajTipi: String, Codable, Sendable {
     case anketSonuc = "anket_sonuc"
     case acikAnketler = "acik_anketler"
     case anketGecmisi = "anket_gecmisi"
+    case cagriGecmisi = "cagri_gecmisi"
     case nabizYanit = "nabiz_yanit"
 }
 
@@ -244,6 +246,53 @@ struct AcikAnketlerVeri: Decodable, Sendable {
     init(from decoder: any Decoder) throws {
         let k = try decoder.container(keyedBy: CodingKeys.self)
         anketler = try k.decodeIfPresent([AnketSonucVeri].self, forKey: .anketler) ?? []
+    }
+}
+
+/// Geçmişteki tek bir seslenme. Hem gönderen hem alıcı adını taşır: liste iki
+/// yönü birlikte gösterdiği için istemcinin yönü ayırt edebilmesi gerekir.
+struct CagriGecmisSatiri: Decodable, Sendable {
+    var cagriID: String
+    var gonderenID: String
+    var gonderenAd: String
+    var aliciID: String
+    var aliciAd: String
+    var seviye: Seviye
+    var not: String
+    var gonderildi: Int
+    /// Boşsa çağrı yanıtsız kalmıştır.
+    var yanit: String
+    var yanitTarih: Int
+
+    enum CodingKeys: String, CodingKey {
+        case cagriID, gonderenID, gonderenAd, aliciID, aliciAd
+        case seviye, not, gonderildi, yanit, yanitTarih
+    }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        cagriID = try k.decode(String.self, forKey: .cagriID)
+        gonderenID = try k.decode(String.self, forKey: .gonderenID)
+        gonderenAd = try k.decode(String.self, forKey: .gonderenAd)
+        aliciID = try k.decode(String.self, forKey: .aliciID)
+        aliciAd = try k.decode(String.self, forKey: .aliciAd)
+        seviye = try k.decode(Seviye.self, forKey: .seviye)
+        not = try k.decodeIfPresent(String.self, forKey: .not) ?? ""
+        gonderildi = try k.decode(Int.self, forKey: .gonderildi)
+        yanit = try k.decodeIfPresent(String.self, forKey: .yanit) ?? ""
+        yanitTarih = try k.decodeIfPresent(Int.self, forKey: .yanitTarih) ?? 0
+    }
+}
+
+/// İstenince gelen, alınan ve gönderilen son seslenmeler (yeniden eskiye).
+struct CagriGecmisiVeri: Decodable, Sendable {
+    var cagrilar: [CagriGecmisSatiri]
+
+    enum CodingKeys: String, CodingKey { case cagrilar }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        cagrilar = try k.decodeIfPresent([CagriGecmisSatiri].self, forKey: .cagrilar) ?? []
     }
 }
 

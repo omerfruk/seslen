@@ -57,6 +57,8 @@ final class SunucuIstemcisi {
     private(set) var anketler: [Anket] = []
     /// Geçmiş ekranı açılınca doldurulur; bitmişler dahil son anketler.
     private(set) var anketGecmisi: [Anket] = []
+    /// Geçmiş ekranı açılınca doldurulur; alınan ve gönderilen son seslenmeler.
+    private(set) var cagriGecmisi: [GecmisSeslenme] = []
     /// Kullanıcıya gösterilecek son hata mesajı (menüde kısa süre görünür).
     var sonHata: String?
     /// Hata olmayan ama kullanıcının bilmesi gereken son durum (menüde görünür).
@@ -177,6 +179,7 @@ final class SunucuIstemcisi {
         bekleyenCagri = 0
         anketler = []
         anketGecmisi = []
+        cagriGecmisi = []
         gizlenenAnketler = []
     }
 
@@ -345,6 +348,11 @@ final class SunucuIstemcisi {
         yolla(.anketGecmisiIste, BosGovde?.none)
     }
 
+    /// Alınan ve gönderilen son seslenmeleri sunucudan ister.
+    func cagriGecmisiniIste() {
+        yolla(.cagriGecmisiIste, BosGovde?.none)
+    }
+
     /// Anketi panelden kaldırır.
     ///
     /// Yalnızca bu kullanıcının görünümünü etkiler; anket sunucuda durmaya ve
@@ -420,6 +428,10 @@ final class SunucuIstemcisi {
             // Geçmiş sunucudan olduğu gibi alınır; gizleme yalnızca paneli
             // ilgilendirir, kullanıcı kapattığı anketi geçmişte bulabilmeli.
             anketGecmisi = gelen.anketler.map(Anket.init)
+
+        case .cagriGecmisi:
+            guard let gelen = try? zarf.veri(CagriGecmisiVeri.self) else { return }
+            cagriGecmisi = gelen.cagrilar.map(GecmisSeslenme.init)
 
         case .bilgi:
             guard let gelen = try? zarf.veri(BilgiVeri.self) else { return }
