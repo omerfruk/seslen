@@ -1,7 +1,10 @@
 // Package model, Seslen sunucusunun temel veri tiplerini tanımlar.
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Seviye, bir seslenmenin aciliyetini belirtir.
 type Seviye string
@@ -127,4 +130,65 @@ const (
 // GecerliYanit, yanıt değerinin tanımlı olup olmadığını söyler.
 func GecerliYanit(y string) bool {
 	return y == YanitGeliyorum || y == YanitBekle || y == YanitGorduem
+}
+
+// Anket, kuruma sorulan çoktan seçmeli kısa sorudur ("Kim çay ister?").
+//
+// Seslenmeden farkı: kesmez, kuyruğa girmez ve bir süresi vardır. Masalarda
+// dolaşıp tek tek sormanın yerini alır.
+type Anket struct {
+	ID         string    `json:"id"`
+	KurumID    string    `json:"-"`
+	GonderenID string    `json:"gonderenID"`
+	Soru       string    `json:"soru"`
+	Secenekler []string  `json:"secenekler"`
+	Gonderildi time.Time `json:"gonderildi"`
+	Bitis      time.Time `json:"bitis"`
+	Kapandi    bool      `json:"kapandi"`
+}
+
+// Acik, ankete hâlâ oy verilebilir mi? Kapanış tembeldir: arka planda anket
+// başına zamanlayıcı tutmak yerine her okumada süre süzülür. Böylece sunucu
+// yeniden başladığında da doğru davranır.
+func (a Anket) Acik(simdi time.Time) bool {
+	return !a.Kapandi && simdi.Before(a.Bitis)
+}
+
+// Anket sınırları.
+const (
+	AnketEnAzSecenek     = 2
+	AnketEnCokSecenek    = 5
+	AnketSecenekUzunlugu = 24
+)
+
+// SeceneklerGecerli, kullanıcının girdiği seçenekleri temizler ve doğrular.
+//
+// Büyük/küçük harf duyarsız tekrar reddedilir: "Çay" ve "çay" iki ayrı çubuk
+// olarak çizilirse sonuç okunamaz hale gelir.
+func SeceneklerGecerli(ham []string) ([]string, bool) {
+	temiz := make([]string, 0, len(ham))
+	gorulen := make(map[string]struct{}, len(ham))
+
+	for _, s := range ham {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		// Sınır harf sayısına göre: bayt sayarak kesmek Türkçe harflerin
+		// ortasından bölüp bozuk UTF-8 üretir.
+		if harfler := []rune(s); len(harfler) > AnketSecenekUzunlugu {
+			s = string(harfler[:AnketSecenekUzunlugu])
+		}
+		anahtar := strings.ToLower(s)
+		if _, varsa := gorulen[anahtar]; varsa {
+			return nil, false
+		}
+		gorulen[anahtar] = struct{}{}
+		temiz = append(temiz, s)
+	}
+
+	if len(temiz) < AnketEnAzSecenek || len(temiz) > AnketEnCokSecenek {
+		return nil, false
+	}
+	return temiz, true
 }

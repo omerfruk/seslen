@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -63,6 +64,26 @@ CREATE TABLE IF NOT EXISTS cagrilar (
 	teslim_tarih INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cagrilar_kurum ON cagrilar(kurum_id, gonderildi);
+
+CREATE TABLE IF NOT EXISTS anketler (
+	id          TEXT PRIMARY KEY,
+	kurum_id    TEXT NOT NULL REFERENCES kurumlar(id) ON DELETE CASCADE,
+	gonderen_id TEXT NOT NULL,
+	soru        TEXT NOT NULL,
+	secenekler  TEXT NOT NULL,
+	gonderildi  INTEGER NOT NULL,
+	bitis       INTEGER NOT NULL,
+	kapandi     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_anketler_kurum ON anketler(kurum_id, bitis);
+
+CREATE TABLE IF NOT EXISTS anket_oylari (
+	anket_id TEXT NOT NULL REFERENCES anketler(id) ON DELETE CASCADE,
+	uye_id   TEXT NOT NULL,
+	secenek  INTEGER NOT NULL,
+	oy_tarih INTEGER NOT NULL,
+	PRIMARY KEY (anket_id, uye_id)
+);
 `
 
 // Ac, veritabanını açar ve şemayı hazırlar.
@@ -592,3 +613,134 @@ func (s *Store) YanitsizCagriSayisi(gonderenID, aliciID string, seviye model.Sev
 
 // YeniCagriID, çağrı kimliği üretir.
 func YeniCagriID() string { return yeniID() }
+
+// --- Anket işlemleri ---
+
+// YeniAnketID, anket kimliği üretir.
+func YeniAnketID() string { return yeniID() }
+
+// AnketKaydet, yeni anketi yazar.
+//
+// Seçenekler JSON dizi olarak tek kolonda durur: oluşturulduktan sonra
+// değişmezler, hep bütün olarak okunurlar ve tek tek sorgulanmazlar. Oylar
+// dizin sakladığı için oy çözerken bu JSON'un ayrıştırılması hiç gerekmez.
+func (s *Store) AnketKaydet(a model.Anket) error {
+	secenekler, err := json.Marshal(a.Secenekler)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO anketler (id, kurum_id, gonderen_id, soru, secenekler, gonderildi, bitis, kapandi)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+		a.ID, a.KurumID, a.GonderenID, a.Soru, string(secenekler),
+		a.Gonderildi.Unix(), a.Bitis.Unix(),
+	)
+	return err
+}
+
+const anketSecim = `SELECT id, kurum_id, gonderen_id, soru, secenekler, gonderildi, bitis, kapandi FROM anketler`
+
+func anketTara(tara func(...any) error) (model.Anket, error) {
+	var a model.Anket
+	var secenekler string
+	var gonderildi, bitis int64
+	var kapandi int
+	if err := tara(&a.ID, &a.KurumID, &a.GonderenID, &a.Soru, &secenekler, &gonderildi, &bitis, &kapandi); err != nil {
+		return model.Anket{}, err
+	}
+	if err := json.Unmarshal([]byte(secenekler), &a.Secenekler); err != nil {
+		return model.Anket{}, err
+	}
+	a.Gonderildi = time.Unix(gonderildi, 0)
+	a.Bitis = time.Unix(bitis, 0)
+	a.Kapandi = kapandi != 0
+	return a, nil
+}
+
+// AnketGetir, anketi kimliğiyle okur.
+func (s *Store) AnketGetir(id string) (model.Anket, error) {
+	a, err := anketTara(s.db.QueryRow(anketSecim+` WHERE id = ?`, id).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Anket{}, ErrBulunamadi
+	}
+	return a, err
+}
+
+// AcikAnketler, kurumda hâlâ oy verilebilen anketleri döner.
+func (s *Store) AcikAnketler(kurumID string, simdi time.Time) ([]model.Anket, error) {
+	satirlar, err := s.db.Query(
+		anketSecim+` WHERE kurum_id = ? AND kapandi = 0 AND bitis > ? ORDER BY gonderildi`,
+		kurumID, simdi.Unix(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer satirlar.Close()
+
+	var liste []model.Anket
+	for satirlar.Next() {
+		a, err := anketTara(satirlar.Scan)
+		if err != nil {
+			return nil, err
+		}
+		liste = append(liste, a)
+	}
+	return liste, satirlar.Err()
+}
+
+// AcikAnketimVarMi, üyenin hâlâ açık bir anketi olup olmadığını söyler.
+// Kişi başına tek açık anket kuralı, hız sınırının bedava ve anlaşılır halidir.
+func (s *Store) AcikAnketimVarMi(gonderenID string, simdi time.Time) (bool, error) {
+	var adet int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM anketler WHERE gonderen_id = ? AND kapandi = 0 AND bitis > ?`,
+		gonderenID, simdi.Unix(),
+	).Scan(&adet)
+	return adet > 0, err
+}
+
+// AnketKapat, anketi süresi dolmadan bitirir.
+func (s *Store) AnketKapat(anketID string) error {
+	_, err := s.db.Exec(`UPDATE anketler SET kapandi = 1 WHERE id = ?`, anketID)
+	return err
+}
+
+// OyVer, üyenin oyunu yazar; daha önce oy vermişse değiştirir.
+//
+// Çağrılardaki "yanıt geri alınamaz" kuralı burada geçerli değil: "geliyorum"
+// bir taahhüt, anket cevabı ise bir tercihtir. Üç düğmeli dar bir balonda
+// yanlış tıklamak kolaydır ve geri alma yolu yoksa gönderen yanlış veriyle
+// hareket eder.
+func (s *Store) OyVer(anketID, uyeID string, secenek int) error {
+	_, err := s.db.Exec(
+		`INSERT INTO anket_oylari (anket_id, uye_id, secenek, oy_tarih) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(anket_id, uye_id) DO UPDATE SET secenek = excluded.secenek, oy_tarih = excluded.oy_tarih`,
+		anketID, uyeID, secenek, time.Now().Unix(),
+	)
+	return err
+}
+
+// AnketOylari, ankete verilen tüm oyları üyeID → seçenek olarak döner.
+//
+// Sayımlar ve "benim oyum" bundan türetilir. Ayrı sorgular olsaydı her oyda
+// alıcı sayısı kadar sorgu atılırdı.
+func (s *Store) AnketOylari(anketID string) (map[string]int, error) {
+	satirlar, err := s.db.Query(
+		`SELECT uye_id, secenek FROM anket_oylari WHERE anket_id = ?`, anketID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer satirlar.Close()
+
+	oylar := make(map[string]int)
+	for satirlar.Next() {
+		var uyeID string
+		var secenek int
+		if err := satirlar.Scan(&uyeID, &secenek); err != nil {
+			return nil, err
+		}
+		oylar[uyeID] = secenek
+	}
+	return oylar, satirlar.Err()
+}

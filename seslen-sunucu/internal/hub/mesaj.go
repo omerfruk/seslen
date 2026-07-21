@@ -53,6 +53,12 @@ func (h *Hub) mesajIsle(b *Baglanti, zarf protokol.Zarf) {
 		h.uyeSilIsle(b, zarf.Veri)
 	case protokol.TipKodYenile:
 		h.kodYenileIsle(b)
+	case protokol.TipAnket:
+		h.anketIsle(b, zarf.Veri)
+	case protokol.TipAnketOy:
+		h.anketOyIsle(b, zarf.Veri)
+	case protokol.TipAnketBitir:
+		h.anketBitirIsle(b, zarf.Veri)
 	case protokol.TipNabiz:
 		mesaj, _ := protokol.Paketle(protokol.TipNabizYanit, nil)
 		b.Yolla(mesaj)
@@ -402,6 +408,229 @@ func (h *Hub) durumIsle(b *Baglanti, ham json.RawMessage) {
 	// Yayın kilidin dışında: h.mu alıp N üyeye mesaj yolluyor, kilit altında
 	// tutmanın kazancı yok.
 	h.KurumaYayinla(b.kurumID)
+}
+
+// anketSuresi, anketin ne kadar açık kalacağıdır.
+//
+// Süresiz anket üç şeyi bozardı: gönderendeki "3 yanıt bekleniyor" yazısı hiç
+// çözülmez, açık anket listesi sınırsız büyür ve her yeniden bağlanmada daha
+// uzun bir liste gider. Kullanıcıya sorulmuyor; haykırışın seviye sormamasıyla
+// aynı sadelik.
+const anketSuresi = 5 * time.Minute
+
+// anketIsle, kuruma yeni bir anket açar.
+//
+// Yetki aranmaz — yayın gibi anket de en hafif biçimde gider. Çağrıların aksine
+// `cagrilar` tablosuna satır yazılmaz ve teslim izlenmez: anket kuyruğa girmez.
+func (h *Hub) anketIsle(b *Baglanti, ham json.RawMessage) {
+	var istek protokol.AnketIstek
+	if err := json.Unmarshal(ham, &istek); err != nil {
+		b.hata(protokol.HataGecersiz, "istek çözümlenemedi")
+		return
+	}
+
+	gonderen, err := h.depo.UyeGetir(b.uyeID)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "gönderen okunamadı")
+		return
+	}
+	if !gonderen.Onayli {
+		b.hata(protokol.HataYetkisiz, "üyeliğiniz henüz onaylanmadı")
+		return
+	}
+
+	soru := notKisalt(istek.Soru)
+	if soru == "" {
+		b.hata(protokol.HataGecersiz, "anket sorusu boş olamaz")
+		return
+	}
+	secenekler, tamam := model.SeceneklerGecerli(istek.Secenekler)
+	if !tamam {
+		b.hata(protokol.HataGecersiz, "anket 2-5 farklı seçenek ister")
+		return
+	}
+
+	simdi := time.Now()
+	varsa, err := h.depo.AcikAnketimVarMi(gonderen.ID, simdi)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "anketler okunamadı")
+		return
+	}
+	if varsa {
+		b.hata(protokol.HataGecersiz, "önceki anketiniz hâlâ açık")
+		return
+	}
+
+	anket := model.Anket{
+		ID:         store.YeniAnketID(),
+		KurumID:    gonderen.KurumID,
+		GonderenID: gonderen.ID,
+		Soru:       soru,
+		Secenekler: secenekler,
+		Gonderildi: simdi,
+		Bitis:      simdi.Add(anketSuresi),
+	}
+	if err := h.depo.AnketKaydet(anket); err != nil {
+		h.kayit.Error("anket kaydedilemedi", "hata", err)
+		b.hata(protokol.HataSunucu, "anket kaydedilemedi")
+		return
+	}
+
+	mesaj, err := protokol.Paketle(protokol.TipAnketGeldi, protokol.AnketGeldiVeri{
+		AnketID:    anket.ID,
+		GonderenID: gonderen.ID,
+		GonderenAd: gonderen.AdSoyad,
+		Soru:       anket.Soru,
+		Secenekler: anket.Secenekler,
+		Gonderildi: anket.Gonderildi.Unix(),
+		Bitis:      anket.Bitis.Unix(),
+	})
+	if err != nil {
+		b.hata(protokol.HataSunucu, "anket paketlenemedi")
+		return
+	}
+
+	// Gönderen de kitlenin içindedir: "kim çay ister" soranın da canı çekiyor
+	// olabilir. Duyuru ona gitmez, sonucu zaten anında görüyor.
+	uyeler, err := h.depo.UyeleriGetir(gonderen.KurumID)
+	if err != nil {
+		b.hata(protokol.HataSunucu, "üyeler okunamadı")
+		return
+	}
+	for _, alici := range uyeler {
+		if alici.ID != gonderen.ID {
+			h.UyeyeGonder(alici.ID, mesaj)
+		}
+	}
+
+	// Gönderene boş sayımlı sonuç: sonuç kartı anında açılsın.
+	h.anketSonucuYayinla(anket)
+	h.kayit.Info("anket açıldı", "gonderen", gonderen.AdSoyad, "soru", anket.Soru)
+}
+
+// anketOyIsle, ankete verilen oyu kaydeder ve güncel sonucu kuruma yayar.
+func (h *Hub) anketOyIsle(b *Baglanti, ham json.RawMessage) {
+	var istek protokol.AnketOyIstek
+	if err := json.Unmarshal(ham, &istek); err != nil {
+		b.hata(protokol.HataGecersiz, "istek çözümlenemedi")
+		return
+	}
+
+	anket, err := h.depo.AnketGetir(istek.AnketID)
+	if err != nil {
+		b.hata(protokol.HataBulunamadi, "anket bulunamadı")
+		return
+	}
+	// Kurum sınırı: başka kurumun anketine oy verilemez.
+	if anket.KurumID != b.kurumID {
+		b.hata(protokol.HataBulunamadi, "anket bulunamadı")
+		return
+	}
+	if !anket.Acik(time.Now()) {
+		b.hata(protokol.HataGecersiz, "anket kapandı")
+		return
+	}
+	if istek.Secenek < 0 || istek.Secenek >= len(anket.Secenekler) {
+		b.hata(protokol.HataGecersiz, "geçersiz seçenek")
+		return
+	}
+
+	if err := h.depo.OyVer(anket.ID, b.uyeID, istek.Secenek); err != nil {
+		h.kayit.Error("oy yazılamadı", "anket", anket.ID, "hata", err)
+		b.hata(protokol.HataSunucu, "oy kaydedilemedi")
+		return
+	}
+	h.anketSonucuYayinla(anket)
+}
+
+// anketBitirIsle, anketi süresi dolmadan kapatır. Yalnızca soruyu soran
+// kapatabilir; yönetim yetkisi burada aranmaz, anket bir yönetim işlemi değil.
+func (h *Hub) anketBitirIsle(b *Baglanti, ham json.RawMessage) {
+	var istek protokol.AnketIDIstek
+	if err := json.Unmarshal(ham, &istek); err != nil {
+		b.hata(protokol.HataGecersiz, "istek çözümlenemedi")
+		return
+	}
+
+	anket, err := h.depo.AnketGetir(istek.AnketID)
+	if err != nil || anket.KurumID != b.kurumID {
+		b.hata(protokol.HataBulunamadi, "anket bulunamadı")
+		return
+	}
+	if anket.GonderenID != b.uyeID {
+		b.hata(protokol.HataYetkisiz, "yalnızca anketi açan kişi bitirebilir")
+		return
+	}
+	if err := h.depo.AnketKapat(anket.ID); err != nil {
+		b.hata(protokol.HataSunucu, "anket kapatılamadı")
+		return
+	}
+
+	anket.Kapandi = true
+	h.anketSonucuYayinla(anket)
+}
+
+// anketSonucuHazirla, anketin güncel durumunu tek bir üyenin gözünden paketler.
+// BenimOyum alanı kişiye özel olduğu için sonuç her alıcı için ayrı hazırlanır.
+func (h *Hub) anketSonucuHazirla(anket model.Anket, uyeID string) (protokol.AnketSonucVeri, bool) {
+	oylar, err := h.depo.AnketOylari(anket.ID)
+	if err != nil {
+		h.kayit.Error("anket oyları okunamadı", "anket", anket.ID, "hata", err)
+		return protokol.AnketSonucVeri{}, false
+	}
+	uyeler, err := h.depo.UyeleriGetir(anket.KurumID)
+	if err != nil {
+		return protokol.AnketSonucVeri{}, false
+	}
+	gonderen, err := h.depo.UyeGetir(anket.GonderenID)
+	if err != nil {
+		return protokol.AnketSonucVeri{}, false
+	}
+
+	sayimlar := make([]int, len(anket.Secenekler))
+	for _, secenek := range oylar {
+		if secenek >= 0 && secenek < len(sayimlar) {
+			sayimlar[secenek]++
+		}
+	}
+
+	veri := protokol.AnketSonucVeri{
+		AnketID:    anket.ID,
+		GonderenID: anket.GonderenID,
+		GonderenAd: gonderen.AdSoyad,
+		Soru:       anket.Soru,
+		Secenekler: anket.Secenekler,
+		Sayimlar:   sayimlar,
+		Katilan:    len(oylar),
+		Beklenen:   len(uyeler),
+		BenimOyum:  -1,
+		Kapandi:    anket.Kapandi,
+		Bitis:      anket.Bitis.Unix(),
+	}
+	if secenek, verdi := oylar[uyeID]; verdi {
+		veri.BenimOyum = secenek
+	}
+	return veri, true
+}
+
+// anketSonucuYayinla, anketin güncel durumunu kurumdaki herkese gönderir.
+func (h *Hub) anketSonucuYayinla(anket model.Anket) {
+	uyeler, err := h.depo.UyeleriGetir(anket.KurumID)
+	if err != nil {
+		h.kayit.Error("üyeler okunamadı", "kurum", anket.KurumID, "hata", err)
+		return
+	}
+	for _, uye := range uyeler {
+		veri, tamam := h.anketSonucuHazirla(anket, uye.ID)
+		if !tamam {
+			return
+		}
+		mesaj, err := protokol.Paketle(protokol.TipAnketSonuc, veri)
+		if err != nil {
+			continue
+		}
+		h.UyeyeGonder(uye.ID, mesaj)
+	}
 }
 
 // yonetimDogrula, isteği yapanın yönetim yetkisi olduğunu ve hedefin aynı kurumda

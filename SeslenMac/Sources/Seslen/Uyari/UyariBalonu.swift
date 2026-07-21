@@ -36,6 +36,8 @@ final class UyariBalonu {
 
     private let genislik: CGFloat = 360
     private let satirYuksekligi: CGFloat = 78
+    /// Anket satırı seçenek düğmeleri için fazladan yer ister.
+    private let anketSatirYuksekligi: CGFloat = 104
     private let tasmaYuksekligi: CGFloat = 30
     private let aralik: CGFloat = 8
     /// Ekran kenarına bırakılan boşluk.
@@ -45,6 +47,18 @@ final class UyariBalonu {
     private var barindirici: BalonBarindirici?
     /// Okunmayı bekleyen tüm öğeler; baştakiler en eskisidir.
     private var bekleyenler: [BalonOgesi] = []
+
+    /// Anket seçeneğine basıldığında haber verir. Kurulumdan sonra atanır:
+    /// `UyariYoneticisi` `@Observable` olduğu için orada `lazy` kullanılamıyor.
+    var oySecildi: ((String, Int) -> Void)?
+
+    /// Öğenin çizileceği yükseklik.
+    private func yukseklik(_ oge: BalonOgesi) -> CGFloat {
+        switch oge.icerik {
+        case .okundu: satirYuksekligi
+        case .anket: anketSatirYuksekligi
+        }
+    }
 
     /// Bir öğeyi balon olarak gösterir.
     func goster(_ oge: BalonOgesi) {
@@ -80,29 +94,40 @@ final class UyariBalonu {
         let gorunenler = Array(bekleyenler.prefix(enFazla))
         let tasma = bekleyenler.count - gorunenler.count
 
+        let yukseklikler: [CGFloat] = gorunenler.map { yukseklik($0) }
+
         let icerik = BalonYigini(
             ogeler: gorunenler,
+            yukseklikler: yukseklikler,
             tasma: tasma,
             genislik: genislik,
-            satirYuksekligi: satirYuksekligi,
             tasmaYuksekligi: tasmaYuksekligi,
             aralik: aralik,
             okundu: { [weak self] ogeID in self?.kaldir(ogeID) },
+            oySecildi: { [weak self] anketID, secenek, ogeID in
+                self?.oySecildi?(anketID, secenek)
+                // Oy vermek açık bir okuma+eylemdir; balon burada kapanabilir.
+                // "Kendiliğinden kapanmaz" kuralı okunmamış mesaj kaybolmasın
+                // diyeydi. Canlı sonuç balonun değil menünün işi.
+                self?.kaldir(ogeID)
+            },
             hepsiniKapat: { [weak self] in self?.kapat() }
         )
 
-        // Yükseklik satır sayısından hesaplanır; böylece pencere boyutu için
-        // SwiftUI'nin ölçüm turunu beklemek gerekmez.
-        let sayi = CGFloat(gorunenler.count)
-        var yukseklik = sayi * satirYuksekligi + (sayi - 1) * aralik
-        if tasma > 0 { yukseklik += aralik + tasmaYuksekligi }
+        // Yükseklik öğelerden toplanır; böylece pencere boyutu için SwiftUI'nin
+        // ölçüm turunu beklemek gerekmez. Anket satırları daha uzun olduğu için
+        // düz çarpma yetmiyor, ama yaklaşım aynı kalıyor: ölçme değil, hesapla.
+        var toplamYukseklik: CGFloat = 0
+        for satir in yukseklikler { toplamYukseklik += satir }
+        toplamYukseklik += CGFloat(gorunenler.count - 1) * aralik
+        if tasma > 0 { toplamYukseklik += aralik + tasmaYuksekligi }
 
         let alan = ekran.visibleFrame
         let cerceve = NSRect(
             x: alan.maxX - genislik - kenarBosluk,
-            y: alan.maxY - yukseklik - kenarBosluk,
+            y: alan.maxY - toplamYukseklik - kenarBosluk,
             width: genislik,
-            height: yukseklik
+            height: toplamYukseklik
         )
 
         if let barindirici {
@@ -139,20 +164,26 @@ final class UyariBalonu {
 /// Ekranda üst üste duran balonlar.
 private struct BalonYigini: View {
     let ogeler: [BalonOgesi]
+    /// `ogeler` ile aynı sırada, satır başına yükseklik.
+    let yukseklikler: [CGFloat]
     /// Ekrana sığmayıp kuyrukta bekleyen balon sayısı.
     let tasma: Int
     let genislik: CGFloat
-    let satirYuksekligi: CGFloat
     let tasmaYuksekligi: CGFloat
     let aralik: CGFloat
     let okundu: (String) -> Void
+    let oySecildi: (String, Int, String) -> Void
     let hepsiniKapat: () -> Void
 
     var body: some View {
         VStack(spacing: aralik) {
-            ForEach(ogeler) { oge in
-                BalonSatiri(oge: oge) { okundu(oge.id) }
-                    .frame(width: genislik, height: satirYuksekligi)
+            ForEach(Array(ogeler.enumerated()), id: \.element.id) { dizin, oge in
+                BalonSatiri(
+                    oge: oge,
+                    okundu: { okundu(oge.id) },
+                    oySecildi: { anketID, secenek in oySecildi(anketID, secenek, oge.id) }
+                )
+                .frame(width: genislik, height: yukseklikler[dizin])
             }
             if tasma > 0 {
                 tasmaSatiri
@@ -182,10 +213,11 @@ private struct BalonYigini: View {
     }
 }
 
-/// Tek bir balon: kim, ne dedi. Yalnızca "Okudum" ile kapanır.
+/// Tek bir balon: kim, ne dedi. Yalnızca düğmeyle kapanır.
 private struct BalonSatiri: View {
     let oge: BalonOgesi
     let okundu: () -> Void
+    let oySecildi: (String, Int) -> Void
 
     private var basHarfler: String {
         let parcalar = oge.baslik.split(separator: " ").prefix(2)
@@ -229,16 +261,27 @@ private struct BalonSatiri: View {
                     .foregroundStyle(oge.renk)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
+            switch oge.icerik {
+            case .okundu:
+                HStack(alignment: .bottom, spacing: 8) {
+                    Text(oge.altSatir)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 8)
+
+                    okudumDugmesi
+                }
+
+            case let .anket(anketID, secenekler):
                 Text(oge.altSatir)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Spacer(minLength: 8)
-
-                okudumDugmesi
+                anketDugmeleri(anketID: anketID, secenekler: secenekler)
             }
         }
         .padding(.horizontal, 12)
@@ -250,6 +293,32 @@ private struct BalonSatiri: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(oge.renk.opacity(0.45), lineWidth: 1)
                 }
+        }
+    }
+
+    /// Anket seçenekleri. Beş seçenek 360pt'ye tek satırda sığmayabildiği için
+    /// esnek ızgaraya konur; "Katılma" oy vermeden kapatma yoludur.
+    private func anketDugmeleri(anketID: String, secenekler: [String]) -> some View {
+        HStack(spacing: 5) {
+            ForEach(Array(secenekler.enumerated()), id: \.offset) { dizin, secenek in
+                Button { oySecildi(anketID, dizin) } label: {
+                    Text(secenek)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .foregroundStyle(oge.renk)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background { Capsule().fill(oge.renk.opacity(0.18)) }
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button("Katılma", action: okundu)
+                .buttonStyle(.plain)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize()
         }
     }
 

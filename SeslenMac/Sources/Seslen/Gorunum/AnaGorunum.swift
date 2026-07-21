@@ -12,6 +12,8 @@ struct AnaGorunum: View {
     @State private var secilenUye: Uye?
     /// Herkese haykırma ekranı açık mı?
     @State private var haykirmaAcik = false
+    /// Anket oluşturma ekranı açık mı?
+    @State private var anketAcik = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +25,8 @@ struct AnaGorunum: View {
                 SeslenmeHazirla(uye: uye) { secilenUye = nil }
             } else if haykirmaAcik {
                 HaykirHazirla { haykirmaAcik = false }
+            } else if anketAcik {
+                AnketHazirla { anketAcik = false }
             } else {
                 kisiListesi
             }
@@ -62,7 +66,18 @@ struct AnaGorunum: View {
                 bilgiSeridi(bilgi)
             }
 
-            haykirSeridi
+            eylemSeridi
+
+            // Açık anketler listenin üstünde: oy vermeden balonu kapatan
+            // kişinin ankete ulaşabileceği tek yer burası.
+            ForEach(istemci.anketler) { anket in
+                AnketSonucGorunumu(
+                    anket: anket,
+                    benimID: istemci.ben?.id,
+                    oyVer: { istemci.anketOyVer(anketID: anket.id, secenek: $0) },
+                    bitir: { istemci.anketBitir(anketID: anket.id) }
+                )
+            }
 
             Divider()
 
@@ -104,23 +119,43 @@ struct AnaGorunum: View {
         return min(CGFloat(istemci.digerUyeler.count) * satirYuksekligi + 12, 380)
     }
 
-    private var haykirSeridi: some View {
-        Button {
-            haykirmaAcik = true
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "megaphone.fill")
-                Text("Herkese haykır")
+    /// Haykır ve anket yan yana: iki tam genişlik şeridi üst üste koymak
+    /// paneli gereksiz uzatırdı.
+    private var eylemSeridi: some View {
+        HStack(spacing: 0) {
+            eylemDugmesi(
+                baslik: "Herkese haykır",
+                simge: "megaphone.fill",
+                renk: .purple
+            ) { haykirmaAcik = true }
+
+            Divider().frame(height: 18)
+
+            eylemDugmesi(
+                baslik: "Anket aç",
+                simge: "checklist",
+                renk: .teal
+            ) { anketAcik = true }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func eylemDugmesi(
+        baslik: String, simge: String, renk: Color, secildi: @escaping () -> Void
+    ) -> some View {
+        Button(action: secildi) {
+            HStack(spacing: 6) {
+                Image(systemName: simge)
+                Text(baslik)
                     .font(.system(size: 12, weight: .medium))
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption2)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.purple)
+        .foregroundStyle(renk)
         .background(Color.purple.opacity(0.14))
         .disabled(!istemci.baglanti.iyi)
     }

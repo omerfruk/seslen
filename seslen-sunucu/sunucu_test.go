@@ -400,6 +400,227 @@ func TestBaglantidaDurumTazeleme(t *testing.T) {
 	}
 }
 
+// anketSonucu, bir sonuç mesajını bekleyip çözer.
+func (c *istemci) anketSonucu(sure time.Duration) protokol.AnketSonucVeri {
+	c.t.Helper()
+	zarf := c.bekle(protokol.TipAnketSonuc, sure)
+	var sonuc protokol.AnketSonucVeri
+	json.Unmarshal(zarf.Veri, &sonuc)
+	return sonuc
+}
+
+// cayAnketiAc, standart üç seçenekli anketi açar ve gönderene dönen ilk
+// sonucu döndürür.
+func (k kurumOrtami) cayAnketiAc() protokol.AnketSonucVeri {
+	k.omer.yolla(protokol.TipAnket, protokol.AnketIstek{
+		Soru: "Kim çay ister?", Secenekler: []string{"Çay", "Kahve", "Yok"},
+	})
+	return k.omer.anketSonucu(2 * time.Second)
+}
+
+// TestAnketAkisi, anketin açılıp alıcılara ulaştığını ve oyların gönderende
+// canlı sayıldığını doğrular.
+func TestAnketAkisi(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	sonuc := k.cayAnketiAc()
+	if sonuc.Beklenen != 2 {
+		t.Errorf("gönderen de kitleye dahil, 2 beklenirdi, gelen: %d", sonuc.Beklenen)
+	}
+	if sonuc.Katilan != 0 {
+		t.Errorf("henüz oy yok, 0 beklenirdi, gelen: %d", sonuc.Katilan)
+	}
+
+	// Ali'ye duyuru gitmeli; gönderene gitmez, o sonucu zaten görüyor.
+	zarf := k.ali.bekle(protokol.TipAnketGeldi, 2*time.Second)
+	var geldi protokol.AnketGeldiVeri
+	json.Unmarshal(zarf.Veri, &geldi)
+	if len(geldi.Secenekler) != 3 || geldi.Secenekler[0] != "Çay" {
+		t.Fatalf("seçenekler bozuk geldi: %v", geldi.Secenekler)
+	}
+
+	k.ali.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{AnketID: geldi.AnketID, Secenek: 0})
+	sonuc = k.omer.anketSonucu(2 * time.Second)
+	if sonuc.Sayimlar[0] != 1 || sonuc.Katilan != 1 {
+		t.Errorf("çay 1 oy almalıydı, gelen sayımlar: %v (katılan %d)", sonuc.Sayimlar, sonuc.Katilan)
+	}
+	// Gönderen kendi oyunu vermedi; oyu -1 kalmalı.
+	if sonuc.BenimOyum != -1 {
+		t.Errorf("gönderen oy vermedi, -1 beklenirdi, gelen: %d", sonuc.BenimOyum)
+	}
+}
+
+// TestAnketOyDegistirme, oyun değiştirilebildiğini ve toplamın şişmediğini
+// doğrular. Dar bir balonda yanlış tıklamak kolaydır; geri alma yolu olmalı.
+func TestAnketOyDegistirme(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	k.cayAnketiAc()
+	zarf := k.ali.bekle(protokol.TipAnketGeldi, 2*time.Second)
+	var geldi protokol.AnketGeldiVeri
+	json.Unmarshal(zarf.Veri, &geldi)
+	// Anket açılırken boş sonuç herkese gider (alıcının kartı da dolmalı);
+	// oy sonuçlarını okumadan önce onu tüketiyoruz.
+	k.ali.anketSonucu(2 * time.Second)
+
+	k.ali.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{AnketID: geldi.AnketID, Secenek: 0})
+	k.ali.anketSonucu(2 * time.Second)
+
+	k.ali.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{AnketID: geldi.AnketID, Secenek: 1})
+	sonuc := k.ali.anketSonucu(2 * time.Second)
+
+	if sonuc.Katilan != 1 {
+		t.Errorf("oy değişti, katılan 1 kalmalıydı, gelen: %d", sonuc.Katilan)
+	}
+	if sonuc.Sayimlar[0] != 0 || sonuc.Sayimlar[1] != 1 {
+		t.Errorf("oy kahveye geçmeliydi, gelen sayımlar: %v", sonuc.Sayimlar)
+	}
+	if sonuc.BenimOyum != 1 {
+		t.Errorf("kendi oyum 1 olmalıydı, gelen: %d", sonuc.BenimOyum)
+	}
+}
+
+// TestAnketKuyrugaGirmez, kapanmış bir anketin sonradan bağlanan üyeye hiçbir
+// koşulda iletilmediğini doğrular. Anket, kaçırılan çağrılar gibi davranmaz.
+func TestAnketKuyrugaGirmez(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	k.ali.ws.Close()
+	k.omer.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	sonuc := k.cayAnketiAc()
+	// Süresinin dolmasını beklemeden aynı kuralı sınamak için erken bitiriyoruz.
+	k.omer.yolla(protokol.TipAnketBitir, protokol.AnketIDIstek{AnketID: sonuc.AnketID})
+	k.omer.anketSonucu(2 * time.Second)
+
+	ali2 := o.baglan(k.aliToken, k.aliID)
+	ali2.yolla(protokol.TipNabiz, nil)
+	ali2.beklemeyen(protokol.TipAcikAnketler, protokol.TipNabizYanit, 2*time.Second)
+}
+
+// TestAcikAnketYenidenBaglantida, hâlâ açık bir ankete sonradan bağlanan üyenin
+// katılabildiğini doğrular. Kahve almaya gidip dönen kişi ankete yetişmeli.
+func TestAcikAnketYenidenBaglantida(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	k.ali.ws.Close()
+	k.omer.bekle(protokol.TipDurumTam, 2*time.Second)
+	k.cayAnketiAc()
+
+	ali2 := o.baglan(k.aliToken, k.aliID)
+	zarf := ali2.bekle(protokol.TipAcikAnketler, 2*time.Second)
+	var acik protokol.AcikAnketlerVeri
+	json.Unmarshal(zarf.Veri, &acik)
+	if len(acik.Anketler) != 1 {
+		t.Fatalf("1 açık anket beklenirdi, gelen: %d", len(acik.Anketler))
+	}
+
+	ali2.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{
+		AnketID: acik.Anketler[0].AnketID, Secenek: 2,
+	})
+	if sonuc := ali2.anketSonucu(2 * time.Second); sonuc.Sayimlar[2] != 1 {
+		t.Errorf("oy sayılmalıydı, gelen sayımlar: %v", sonuc.Sayimlar)
+	}
+}
+
+// TestAnketDogrulama, seçenek ve soru kurallarının sunucuda uygulandığını
+// doğrular.
+func TestAnketDogrulama(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	gecersizler := []protokol.AnketIstek{
+		{Soru: "Tek seçenek", Secenekler: []string{"Çay"}},
+		{Soru: "Çok seçenek", Secenekler: []string{"a", "b", "c", "d", "e", "f"}},
+		{Soru: "  ", Secenekler: []string{"Çay", "Kahve"}},
+		// Büyük/küçük harf duyarsız tekrar: iki ayrı çubuk olarak çizilirse
+		// sonuç okunamaz hale gelir.
+		{Soru: "Tekrarlı", Secenekler: []string{"Çay", "çay"}},
+	}
+	for _, istek := range gecersizler {
+		k.omer.yolla(protokol.TipAnket, istek)
+		zarf := k.omer.bekle(protokol.TipHata, 2*time.Second)
+		var hata protokol.HataVeri
+		json.Unmarshal(zarf.Veri, &hata)
+		if hata.Kod != protokol.HataGecersiz {
+			t.Errorf("%q için geçersiz hatası beklenirdi, gelen: %q", istek.Soru, hata.Kod)
+		}
+	}
+}
+
+// TestAnketTekAcikAnket, kişi başına tek açık anket kuralını doğrular.
+func TestAnketTekAcikAnket(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	k.cayAnketiAc()
+	k.omer.yolla(protokol.TipAnket, protokol.AnketIstek{
+		Soru: "Öğle nereye?", Secenekler: []string{"Dışarı", "Ofis"},
+	})
+	zarf := k.omer.bekle(protokol.TipHata, 2*time.Second)
+	var hata protokol.HataVeri
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("ikinci anket reddedilmeliydi, gelen kod: %q", hata.Kod)
+	}
+}
+
+// TestAnketBitirmeYetkisi, anketi yalnızca açanın kapatabildiğini doğrular.
+func TestAnketBitirmeYetkisi(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+
+	sonuc := k.cayAnketiAc()
+	k.ali.bekle(protokol.TipAnketGeldi, 2*time.Second)
+
+	k.ali.yolla(protokol.TipAnketBitir, protokol.AnketIDIstek{AnketID: sonuc.AnketID})
+	zarf := k.ali.bekle(protokol.TipHata, 2*time.Second)
+	var hata protokol.HataVeri
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataYetkisiz {
+		t.Errorf("yetkisiz hatası beklenirdi, gelen: %q", hata.Kod)
+	}
+
+	k.omer.yolla(protokol.TipAnketBitir, protokol.AnketIDIstek{AnketID: sonuc.AnketID})
+	if kapanan := k.ali.anketSonucu(2 * time.Second); !kapanan.Kapandi {
+		t.Error("anket kapandı olarak yayınlanmalıydı")
+	}
+
+	// Kapanmış ankete oy verilemez.
+	k.ali.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{AnketID: sonuc.AnketID, Secenek: 0})
+	zarf = k.ali.bekle(protokol.TipHata, 2*time.Second)
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataGecersiz {
+		t.Errorf("kapalı ankete oy reddedilmeliydi, gelen kod: %q", hata.Kod)
+	}
+}
+
+// TestAnketKurumSiniri, başka kurumun anketine oy verilemediğini doğrular.
+func TestAnketKurumSiniri(t *testing.T) {
+	o := ortamKur(t)
+	k := ikiKisilikKurum(o)
+	sonuc := k.cayAnketiAc()
+
+	// Bambaşka bir kurum ve onun kurucusu.
+	_, yanit := o.gonderJSON("/api/kurum/olustur", map[string]string{
+		"kurumAd": "Başka Şirket", "kurucuAd": "Yabancı",
+	})
+	yabanci := o.baglan(yanit["token"].(string), yanit["ben"].(map[string]any)["id"].(string))
+	yabanci.bekle(protokol.TipDurumTam, 2*time.Second)
+
+	yabanci.yolla(protokol.TipAnketOy, protokol.AnketOyIstek{AnketID: sonuc.AnketID, Secenek: 0})
+	zarf := yabanci.bekle(protokol.TipHata, 2*time.Second)
+	var hata protokol.HataVeri
+	json.Unmarshal(zarf.Veri, &hata)
+	if hata.Kod != protokol.HataBulunamadi {
+		t.Errorf("bulunamadı hatası beklenirdi, gelen: %q", hata.Kod)
+	}
+}
+
 // TestCevrimdisiTeslimKuyrugu, üye çevrimdışıyken gelen seslenmenin kaybolmayıp
 // üye bağlanır bağlanmaz iletildiğini ve ikinci kez iletilmediğini doğrular.
 func TestCevrimdisiTeslimKuyrugu(t *testing.T) {

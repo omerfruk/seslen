@@ -36,6 +36,8 @@ final class UyariYoneticisi {
 
     /// Panelde bir yanıt düğmesine basıldığında çağrılır.
     var yanitVerildi: ((_ cagriID: String, _ yanit: Yanit) -> Void)?
+    /// Balondaki anket seçeneklerinden birine basıldığında çağrılır.
+    var anketOyuVerildi: ((_ anketID: String, _ secenek: Int) -> Void)?
 
     private let ayarlar: Ayarlar
     private let panel = UyariPaneli()
@@ -54,6 +56,9 @@ final class UyariYoneticisi {
     init(ayarlar: Ayarlar) {
         self.ayarlar = ayarlar
         bildirimIzni = Bundle.main.bundleIdentifier == nil ? .kullanilamaz : .bilinmiyor
+        balon.oySecildi = { [weak self] anketID, secenek in
+            self?.anketOyuVerildi?(anketID, secenek)
+        }
     }
 
     // MARK: - Gelen seslenme
@@ -95,6 +100,53 @@ final class UyariYoneticisi {
             // zaten o gösteriyor; ikisini birden çıkarmak tekrar olurdu.
             balon.goster(seslenme.balon)
         }
+    }
+
+    // MARK: - Anket
+
+    /// Gelen anketi gösterir.
+    ///
+    /// Karar yine `etkinBicim`'den okunur ama yalnızca üç biçimi kullanılır:
+    /// **panel ve kenar flaşı, kullanıcının ayarı açık olsa bile hiç devreye
+    /// girmez.** Anket rica eder, kesmez — normal seviyenin kasten hafif
+    /// tutulmasıyla aynı gerekçe. Susturulmuş kişi anketle de ulaşamaz: mesaj
+    /// tipi değiştirerek susturmayı aşmak mümkün olmamalı.
+    func anketIsle(_ veri: AnketGeldiVeri) {
+        let bicim = ayarlar.etkinBicim(gonderenID: veri.gonderenID, seviye: .normal)
+        guard !bicim.sessiz else { return }
+
+        if bicim.ikon {
+            dikkatCekiyor = true
+            anketBildirimi(veri)
+        }
+        if bicim.ses {
+            SesCalar.cal(seviye: .normal, siddet: ayarlar.sesSiddeti)
+        }
+        // Anketler `okunmamis` dizisine girmez: o dizi yanıtlanabilir çağrılar
+        // içindir ve `okunduIsaretle(cagriID)` ile temizlenir. Anketi karıştırmak
+        // rozetteki sayıyı iki anlamlı hale getirirdi.
+        balon.goster(.anket(veri))
+    }
+
+    /// Anket kapandığında sonucu tek balonda duyurur. Menüyü hiç açmayan
+    /// kullanıcının sonucu öğrenmesinin tek yolu budur.
+    func anketSonucunuGoster(_ anket: Anket) {
+        balon.goster(.anketSonucu(anket))
+    }
+
+    private func anketBildirimi(_ veri: AnketGeldiVeri) {
+        guard Bundle.main.bundleIdentifier != nil, bildirimIzni == .verildi else { return }
+
+        let icerik = UNMutableNotificationContent()
+        icerik.title = "\(veri.gonderenAd) soruyor"
+        icerik.body = veri.soru
+        // Anket acil değildir; kullanıcı ona kendi zamanında bakar.
+        icerik.interruptionLevel = .passive
+        icerik.sound = nil
+
+        UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: "anket-\(veri.anketID)", content: icerik, trigger: nil
+        ))
     }
 
     /// Bize ulaştırılamamış çağrıları toplu olarak gösterir.

@@ -13,6 +13,9 @@ enum MesajTipi: String, Codable, Sendable {
     case uyeOnayla = "uye_onayla"
     case uyeSil = "uye_sil"
     case kodYenile = "kod_yenile"
+    case anket
+    case anketOy = "anket_oy"
+    case anketBitir = "anket_bitir"
     case nabiz
 
     // Sunucu → İstemci
@@ -22,6 +25,9 @@ enum MesajTipi: String, Codable, Sendable {
     case yanitGeldi = "yanit_geldi"
     case bilgi
     case hata
+    case anketGeldi = "anket_geldi"
+    case anketSonuc = "anket_sonuc"
+    case acikAnketler = "acik_anketler"
     case nabizYanit = "nabiz_yanit"
 }
 
@@ -55,6 +61,23 @@ struct UyeGuncelleIstek: Encodable, Sendable {
 
 struct UyeIDIstek: Encodable, Sendable {
     var uyeID: String
+}
+
+/// Kuruma sorulan çoktan seçmeli soru. Seviye taşımaz: anket kesmez.
+struct AnketIstek: Encodable, Sendable {
+    var soru: String
+    var secenekler: [String]
+}
+
+/// Ankete verilen oy. Seçenek metinle değil dizinle taşınır: serbest metni
+/// eşleştirmek boşluk/harf normalleştirmesi ve tekrar sorunu getirirdi.
+struct AnketOyIstek: Encodable, Sendable {
+    var anketID: String
+    var secenek: Int
+}
+
+struct AnketIDIstek: Encodable, Sendable {
+    var anketID: String
 }
 
 /// Gövdesiz mesajlar için yer tutucu.
@@ -146,6 +169,69 @@ enum KacirilmaSebebi: String, Decodable, Sendable {
         case .cevrimdisi: "KAÇIRILDI"
         case .mesgul: "MEŞGULDÜN"
         }
+    }
+}
+
+/// Yeni açılan anketin duyurusu. Uyarıyı tetikleyen **olay** budur;
+/// sonrasındaki her güncelleme `AnketSonucVeri` ile gelir.
+struct AnketGeldiVeri: Decodable, Sendable {
+    var anketID: String
+    var gonderenID: String
+    var gonderenAd: String
+    var soru: String
+    var secenekler: [String]
+    var gonderildi: Int
+    var bitis: Int
+}
+
+/// Anketin o anki **durumu**; her oyda yeniden yayınlanır.
+struct AnketSonucVeri: Decodable, Sendable {
+    var anketID: String
+    var gonderenID: String
+    var gonderenAd: String
+    var soru: String
+    var secenekler: [String]
+    var sayimlar: [Int]
+    var katilan: Int
+    var beklenen: Int
+    /// Oy verilmemişse -1.
+    var benimOyum: Int
+    var kapandi: Bool
+    var bitis: Int
+
+    enum CodingKeys: String, CodingKey {
+        case anketID, gonderenID, gonderenAd, soru, secenekler
+        case sayimlar, katilan, beklenen, benimOyum, kapandi, bitis
+    }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        anketID = try k.decode(String.self, forKey: .anketID)
+        gonderenID = try k.decode(String.self, forKey: .gonderenID)
+        gonderenAd = try k.decode(String.self, forKey: .gonderenAd)
+        soru = try k.decode(String.self, forKey: .soru)
+        secenekler = try k.decodeIfPresent([String].self, forKey: .secenekler) ?? []
+        sayimlar = try k.decodeIfPresent([Int].self, forKey: .sayimlar) ?? []
+        katilan = try k.decodeIfPresent(Int.self, forKey: .katilan) ?? 0
+        beklenen = try k.decodeIfPresent(Int.self, forKey: .beklenen) ?? 0
+        benimOyum = try k.decodeIfPresent(Int.self, forKey: .benimOyum) ?? -1
+        kapandi = try k.decodeIfPresent(Bool.self, forKey: .kapandi) ?? false
+        bitis = try k.decodeIfPresent(Int.self, forKey: .bitis) ?? 0
+    }
+}
+
+/// Bağlanınca gelen, hâlâ açık anketler.
+///
+/// Bu kaçırılanların anket karşılığı DEĞİLDİR: kuyruk geçmiş bir olayı tekrar
+/// oynatır, bu ise şu anda hâlâ doğru olan bir durumu bildirir.
+struct AcikAnketlerVeri: Decodable, Sendable {
+    var anketler: [AnketSonucVeri]
+
+    enum CodingKeys: String, CodingKey { case anketler }
+
+    init(from decoder: any Decoder) throws {
+        let k = try decoder.container(keyedBy: CodingKeys.self)
+        anketler = try k.decodeIfPresent([AnketSonucVeri].self, forKey: .anketler) ?? []
     }
 }
 

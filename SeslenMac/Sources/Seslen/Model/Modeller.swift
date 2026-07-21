@@ -253,6 +253,105 @@ struct BalonOgesi: Identifiable, Sendable, Equatable {
     var renk: Color
     /// Başlığın yanındaki küçük etiket ("HERKESE" gibi). Boşsa çizilmez.
     var rozet: String = ""
+    /// Balonun alt kısmında ne çizileceği. Varsayılanlı olduğu için mevcut
+    /// kurulum yerlerinin hiçbiri değişmek zorunda değil.
+    var icerik: BalonIcerigi = .okundu
+}
+
+/// Balonun kapanma yolu.
+enum BalonIcerigi: Sendable, Equatable {
+    /// Tek "Okudum" düğmesi.
+    case okundu
+    /// Anket seçenekleri; oy verilince balon kapanır.
+    case anket(anketID: String, secenekler: [String])
+}
+
+extension BalonOgesi {
+    /// Gelen anketin balonu. Oy düğmeleri "Okudum"un yerini alır.
+    static func anket(_ veri: AnketGeldiVeri) -> BalonOgesi {
+        BalonOgesi(
+            id: "anket-\(veri.anketID)",
+            baslik: veri.gonderenAd,
+            altSatir: veri.soru,
+            simge: "checklist",
+            renk: .teal,
+            rozet: "ANKET",
+            icerik: .anket(anketID: veri.anketID, secenekler: veri.secenekler)
+        )
+    }
+
+    /// Anket kapandığında sonucu duyuran balon. Menüyü hiç açmayan kullanıcının
+    /// sonucu öğrenmesinin tek yolu budur.
+    static func anketSonucu(_ anket: Anket) -> BalonOgesi {
+        BalonOgesi(
+            id: "anket-sonuc-\(anket.id)",
+            baslik: anket.soru,
+            altSatir: anket.ozet,
+            simge: "chart.bar.fill",
+            renk: .teal,
+            rozet: "SONUÇ"
+        )
+    }
+}
+
+/// Kuruma sorulmuş çoktan seçmeli soru ve güncel sonucu.
+struct Anket: Identifiable, Sendable, Equatable {
+    var id: String
+    var gonderenID: String
+    var gonderenAd: String
+    var soru: String
+    var secenekler: [String]
+    var sayimlar: [Int]
+    var katilan: Int
+    var beklenen: Int
+    /// Oy verilmemişse nil.
+    var benimOyum: Int?
+    var kapandi: Bool
+    var bitis: Date
+
+    init(_ veri: AnketSonucVeri) {
+        id = veri.anketID
+        gonderenID = veri.gonderenID
+        gonderenAd = veri.gonderenAd
+        soru = veri.soru
+        secenekler = veri.secenekler
+        sayimlar = veri.sayimlar
+        katilan = veri.katilan
+        beklenen = veri.beklenen
+        benimOyum = veri.benimOyum >= 0 ? veri.benimOyum : nil
+        kapandi = veri.kapandi
+        bitis = Date(timeIntervalSince1970: TimeInterval(veri.bitis))
+    }
+
+    /// Ankete hâlâ oy verilebilir mi? Sunucudaki `Anket.Acik` ile aynı kural.
+    var acik: Bool { !kapandi && Date() < bitis }
+
+    var bekleyen: Int { max(beklenen - katilan, 0) }
+
+    /// En çok oyu alan seçeneğin dizini. Berabere ise nil — "kazanan" demek
+    /// yanıltıcı olurdu.
+    var kazanan: Int? {
+        guard let enYuksek = sayimlar.max(), enYuksek > 0 else { return nil }
+        let kazananlar = sayimlar.indices.filter { sayimlar[$0] == enYuksek }
+        return kazananlar.count == 1 ? kazananlar[0] : nil
+    }
+
+    /// Çubuğun dolduracağı oran. Toplam oya değil en yüksek sayıma göre
+    /// ölçeklenir; yoksa üç seçenekli bir ankette kazanan bile üçte bir dolar.
+    func oran(_ dizin: Int) -> Double {
+        guard let enYuksek = sayimlar.max(), enYuksek > 0,
+              sayimlar.indices.contains(dizin)
+        else { return 0 }
+        return Double(sayimlar[dizin]) / Double(enYuksek)
+    }
+
+    /// Tek satırlık sonuç özeti ("Çay kazandı · 4/7").
+    var ozet: String {
+        guard let kazanan, secenekler.indices.contains(kazanan) else {
+            return katilan == 0 ? "Kimse oy vermedi" : "Berabere · \(katilan)/\(beklenen)"
+        }
+        return "\(secenekler[kazanan]) kazandı · \(sayimlar[kazanan])/\(beklenen)"
+    }
 }
 
 extension Seslenme {

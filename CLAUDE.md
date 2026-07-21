@@ -140,6 +140,55 @@ Meşgul bağlanan üyenin kuyruğu `Baglat`'ta **boşaltılmaz**; meşgulün anl
 tam olarak budur. Kullanıcı biriken sayıyı `DurumTamVeri.BekleyenCagri` ile
 menüde görür — meşgul, geri bildirimi olmayan bir kuyuya dönüşmemeli.
 
+## Anket
+
+"Kim çay ister?" gibi çoktan seçmeli kısa soru. Masalarda dolaşıp tek tek
+sormanın yerini alır.
+
+**Kuyruk ≠ canlı durum.** Kural 4'ün yayın istisnası anket için de geçerli:
+anket `cagrilar` tablosuna hiç girmez, `kacirilanlariYolla` ona dokunmaz.
+Ama `Baglat` içinde `acikAnketleriYolla` vardır ve bu kuralı çiğnemez —
+kuyruk *geçmiş bir olayı* tekrar oynatır, bu ise *şu anda hâlâ doğru olan bir
+durumu* bildirir. Kahve almaya gitmişken açılan ve dönüldüğünde hâlâ açık olan
+ankete katılabilmek anketin varlık sebebidir. Kapanmış anket hiç kimseye
+sonradan iletilmez. Yeniden bağlanmada gelen anket **uyarı çıkarmaz**; yoksa
+titrek bağlantıda aynı anket her seferinde baştan çalardı.
+
+**Kapanış tembeldir.** `anketler.bitis` kolonu süzülür; anket başına goroutine
+veya zamanlayıcı yoktur. Sunucu yeniden başladığında da doğru davranır. Süre
+sabit 5 dakika (`hub.anketSuresi`) ve kullanıcıya sorulmaz — `HaykirHazirla`'nın
+seviye sormamasıyla aynı sadelik. Süresiz anket "3 yanıt bekleniyor" yazısını
+hiç çözmez ve açık anket listesini sınırsız büyütürdü.
+
+**Oy metinle değil dizinle taşınır** (`AnketOyIstek.Secenek`). Seçenekler
+serbest metin olduğu için metinle eşleştirmek boşluk/harf normalleştirmesi ve
+tekrar sorunu getirirdi. `model.SeceneklerGecerli` büyük/küçük harf duyarsız
+tekrarı reddeder: "Çay" ve "çay" iki ayrı çubuk olarak çizilirse sonuç okunamaz.
+
+**Oy değiştirilebilir.** Çağrılardaki "yanıt geri alınamaz" kuralı burada
+geçmez: "geliyorum" bir taahhüt, anket cevabı bir tercihtir. Dar bir balonda
+yanlış tıklamak kolaydır ve geri alma yolu yoksa gönderen yanlış veriyle
+hareket eder.
+
+**Anket normal seviyede gelir ama panel ve kenar flaşı hiç devreye girmez** —
+kullanıcının `varsayilan.panel` ayarı açık olsa bile. Anket rica eder, kesmez.
+Susturulmuş kişi anketle de ulaşamaz: mesaj tipi değiştirerek susturmayı aşmak
+mümkün olmamalı. Tacize hiç yükselmez; yanıtsız anket sadece yanıtsız ankettir.
+
+**Kişi başına tek açık anket.** Hız sınırının bedava ve anlaşılır hali.
+
+Sonuç ayrı pencerede değil menü panelinde (`AnketSonucGorunumu`) gösterilir:
+uygulama `.accessory` kipinde olduğu için pencere açmak `NSApp.activate`
+gerektirir ve kullanıcıyı işinden koparır. Kart hem gönderende hem alıcılarda
+görünür — balonu oy vermeden kapatanın ankete ulaşma yolu budur.
+
+Balondaki oy düğmesine basınca balon kapanır. "Kendiliğinden kapanmaz" kuralı
+okunmamış mesaj kaybolmasın diyeydi; oy vermek açık bir okuma+eylemdir.
+
+`UyariBalonu.yenile()` pencere yüksekliğini hâlâ **hesaplar**, ölçmez. Anket
+satırları daha uzun olduğu için düz çarpma yerine satır satır toplanır
+(`yukseklikler` dizisi); SwiftUI ölçüm turunu bekleme yaklaşımına dönülmedi.
+
 ## Uyarı mantığı
 
 Karar tek yerde: `Ayarlar.etkinBicim(gonderenID:seviye:)`.

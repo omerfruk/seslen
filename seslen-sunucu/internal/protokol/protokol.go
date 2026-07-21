@@ -22,6 +22,9 @@ const (
 	TipUyeOnayla   Tip = "uye_onayla"   // (yönetim) bekleyen üyeyi onayla
 	TipUyeSil      Tip = "uye_sil"      // (yönetim) üyeyi kurumdan çıkar
 	TipKodYenile   Tip = "kod_yenile"   // (yönetim) katılım kodunu yenile
+	TipAnket       Tip = "anket"        // kuruma çoktan seçmeli soru sor
+	TipAnketOy     Tip = "anket_oy"     // ankete oy ver (veya oyu değiştir)
+	TipAnketBitir  Tip = "anket_bitir"  // kendi anketini süresi dolmadan kapat
 	TipNabiz       Tip = "nabiz"        // bağlantı canlılık kontrolü
 )
 
@@ -33,6 +36,9 @@ const (
 	TipYanitGeldi    Tip = "yanit_geldi"    // seslendiğin kişi yanıtladı
 	TipBilgi         Tip = "bilgi"          // işlem kabul edildi, bilgi notu var
 	TipHata          Tip = "hata"           // işlem reddedildi
+	TipAnketGeldi    Tip = "anket_geldi"    // yeni bir anket açıldı (olay)
+	TipAnketSonuc    Tip = "anket_sonuc"    // anketin güncel durumu (durum)
+	TipAcikAnketler  Tip = "acik_anketler"  // bağlanınca: hâlâ açık olanlar
 	TipNabizYanit    Tip = "nabiz_yanit"    // nabız cevabı
 )
 
@@ -78,6 +84,28 @@ type UyeGuncelleIstek struct {
 // UyeIDIstek, tek bir üyeyi hedefleyen basit işlemler için kullanılır.
 type UyeIDIstek struct {
 	UyeID string `json:"uyeID"`
+}
+
+// AnketIstek, kuruma sorulan çoktan seçmeli sorudur.
+// Seviye taşımaz: anket her zaman en hafif biçimde gider.
+type AnketIstek struct {
+	Soru       string   `json:"soru"`
+	Secenekler []string `json:"secenekler"`
+}
+
+// AnketOyIstek, ankete verilen oydur.
+//
+// Seçenek metinle değil **dizinle** taşınır: seçenekler serbest metin olduğu
+// için metinle eşleştirmek boşluk/harf normalleştirmesi ve tekrar sorunu
+// getirirdi. Dizin tek anlamlıdır ve sunucu aralığı doğrular.
+type AnketOyIstek struct {
+	AnketID string `json:"anketID"`
+	Secenek int    `json:"secenek"`
+}
+
+// AnketIDIstek, tek bir anketi hedefleyen işlemler için kullanılır.
+type AnketIDIstek struct {
+	AnketID string `json:"anketID"`
 }
 
 // --- Sunucu → İstemci gövdeleri ---
@@ -127,6 +155,46 @@ const (
 	SebepCevrimdisi = "cevrimdisi"
 	SebepMesgul     = "mesgul"
 )
+
+// AnketGeldiVeri, yeni açılan anketin duyurusudur. Uyarıyı tetikleyen **olay**
+// budur; sonrasındaki her güncelleme AnketSonucVeri ile gelir.
+type AnketGeldiVeri struct {
+	AnketID    string   `json:"anketID"`
+	GonderenID string   `json:"gonderenID"`
+	GonderenAd string   `json:"gonderenAd"`
+	Soru       string   `json:"soru"`
+	Secenekler []string `json:"secenekler"`
+	Gonderildi int64    `json:"gonderildi"`
+	Bitis      int64    `json:"bitis"`
+}
+
+// AnketSonucVeri, anketin o anki **durumudur**; her oyda yeniden yayınlanır.
+//
+// BenimOyum alanı yüzünden mesaj kişiye özel hazırlanır — DurumTamVeri.Ben ile
+// aynı durum.
+type AnketSonucVeri struct {
+	AnketID    string   `json:"anketID"`
+	GonderenID string   `json:"gonderenID"`
+	GonderenAd string   `json:"gonderenAd"`
+	Soru       string   `json:"soru"`
+	Secenekler []string `json:"secenekler"`
+	Sayimlar   []int    `json:"sayimlar"`
+	Katilan    int      `json:"katilan"`
+	Beklenen   int      `json:"beklenen"`
+	// BenimOyum, oy verilmemişse -1'dir.
+	BenimOyum int   `json:"benimOyum"`
+	Kapandi   bool  `json:"kapandi"`
+	Bitis     int64 `json:"bitis"`
+}
+
+// AcikAnketlerVeri, bağlanan üyeye hâlâ açık anketleri taşır.
+//
+// Bu kaçırılanların anket karşılığı DEĞİLDİR: kuyruk geçmiş bir olayı sonradan
+// tekrar oynatır, bu ise şu anda hâlâ doğru olan bir durumu bildirir. Kapanmış
+// anket hiç kimseye, hiçbir koşulda sonradan iletilmez.
+type AcikAnketlerVeri struct {
+	Anketler []AnketSonucVeri `json:"anketler"`
+}
 
 // BilgiVeri, reddedilmemiş ama kullanıcıya söylenmesi gereken bir durumu taşır.
 type BilgiVeri struct {

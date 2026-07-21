@@ -95,6 +95,8 @@ func (h *Hub) Baglat(ws *websocket.Conn, uye model.Uye) {
 		h.teslimMu.Unlock()
 	}
 
+	h.acikAnketleriYolla(b)
+
 	go b.yazmaDongusu()
 	b.okumaDongusu()
 }
@@ -155,6 +157,44 @@ func (h *Hub) kacirilanlariYolla(b *Baglanti, sebep string) {
 		h.kayit.Error("teslim işaretlenemedi", "uye", b.uyeID, "hata", err)
 	}
 	h.kayit.Info("kaçırılan çağrılar iletildi", "uye", b.uyeID, "adet", len(veriler), "sebep", sebep)
+}
+
+// acikAnketleriYolla, bağlanan üyeye hâlâ oy verilebilen anketleri bildirir.
+//
+// Bu, kacirilanlariYolla'nın kardeşi DEĞİL karşıtıdır ve kural 4'ü çiğnemez:
+// kuyruk geçmiş bir olayı sonradan tekrar oynatır, bu ise şu anda hâlâ doğru
+// olan bir durumu bildirir. Kahve almaya gitmişken açılan ve dönüldüğünde hâlâ
+// açık olan ankete katılabilmek anketin varlık sebebidir. Kapanmış anket hiç
+// kimseye sonradan iletilmez.
+//
+// Uyarı çıkarmaz, yalnızca menüdeki kartı doldurur: aksi halde titrek
+// bağlantıda her yeniden bağlanma aynı anketi baştan çaldırırdı.
+func (h *Hub) acikAnketleriYolla(b *Baglanti) {
+	anketler, err := h.depo.AcikAnketler(b.kurumID, time.Now())
+	if err != nil {
+		h.kayit.Error("açık anketler okunamadı", "uye", b.uyeID, "hata", err)
+		return
+	}
+	if len(anketler) == 0 {
+		return
+	}
+
+	veriler := make([]protokol.AnketSonucVeri, 0, len(anketler))
+	for _, anket := range anketler {
+		veri, tamam := h.anketSonucuHazirla(anket, b.uyeID)
+		if tamam {
+			veriler = append(veriler, veri)
+		}
+	}
+	if len(veriler) == 0 {
+		return
+	}
+
+	mesaj, err := protokol.Paketle(protokol.TipAcikAnketler, protokol.AcikAnketlerVeri{Anketler: veriler})
+	if err != nil {
+		return
+	}
+	b.Yolla(mesaj)
 }
 
 // ekle, bağlantıyı kaydeder. Aynı üyenin eski oturumu varsa düşürülür.

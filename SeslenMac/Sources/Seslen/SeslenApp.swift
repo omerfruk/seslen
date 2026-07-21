@@ -29,6 +29,17 @@ struct SeslenApp: App {
         istemci.kacirilanlarGeldi = { [weak uyari] seslenmeler, sebep in
             uyari?.kacirilanlariIsle(seslenmeler, sebep: sebep)
         }
+        // Anketin üç ucu da bağlanmalı; biri unutulursa ilgili olay sessizce
+        // yere düşer — yukarıdaki yanıt bağıyla aynı tuzak.
+        istemci.anketGeldi = { [weak uyari] veri in
+            uyari?.anketIsle(veri)
+        }
+        istemci.anketKapandi = { [weak uyari] anket in
+            uyari?.anketSonucunuGoster(anket)
+        }
+        uyari.anketOyuVerildi = { [weak istemci] anketID, secenek in
+            istemci?.anketOyVer(anketID: anketID, secenek: secenek)
+        }
 
         _ayarlar = State(initialValue: ayarlar)
         _istemci = State(initialValue: istemci)

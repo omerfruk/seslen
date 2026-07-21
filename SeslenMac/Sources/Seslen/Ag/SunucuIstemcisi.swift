@@ -52,6 +52,8 @@ final class SunucuIstemcisi {
     private(set) var bekleyen: [Uye] = []
     /// Biz meşgulken kuyruğa alınmış çağrı sayısı; müsaite dönünce sıfırlanır.
     private(set) var bekleyenCagri: Int = 0
+    /// Kurumda görünen anketler; kapananlar kısa süre sonra düşürülür.
+    private(set) var anketler: [Anket] = []
     /// Kullanıcıya gösterilecek son hata mesajı (menüde kısa süre görünür).
     var sonHata: String?
     /// Hata olmayan ama kullanıcının bilmesi gereken son durum (menüde görünür).
@@ -74,6 +76,11 @@ final class SunucuIstemcisi {
     var kacirilanlarGeldi: (([Seslenme], KacirilmaSebebi) -> Void)?
     /// Gönderdiğimiz bir çağrıya yanıt geldiğinde çağrılır.
     var yanitGeldi: ((YanitGeldiVeri) -> Void)?
+    /// Yeni bir anket açıldığında çağrılır (olay). Yeniden bağlanmada gelen
+    /// açık anketler bunu tetiklemez — durum, olay değil.
+    var anketGeldi: ((AnketGeldiVeri) -> Void)?
+    /// Bir anket kapandığında sonucunu duyurmak için çağrılır.
+    var anketKapandi: ((Anket) -> Void)?
 
     // MARK: Özel
 
@@ -155,6 +162,7 @@ final class SunucuIstemcisi {
         uyeler = []
         bekleyen = []
         bekleyenCagri = 0
+        anketler = []
     }
 
     private struct KimlikYaniti: Decodable {
@@ -297,6 +305,37 @@ final class SunucuIstemcisi {
         }
     }
 
+    // MARK: - Anket
+
+    /// Kuruma anket sorar.
+    func anketGonder(soru: String, secenekler: [String]) {
+        yolla(.anket, AnketIstek(soru: soru, secenekler: secenekler))
+    }
+
+    /// Ankete oy verir. Aynı ankete tekrar çağrılırsa oy değişir.
+    func anketOyVer(anketID: String, secenek: Int) {
+        yolla(.anketOy, AnketOyIstek(anketID: anketID, secenek: secenek))
+    }
+
+    /// Kendi anketimizi süresi dolmadan kapatır.
+    func anketBitir(anketID: String) {
+        yolla(.anketBitir, AnketIDIstek(anketID: anketID))
+    }
+
+    /// Anketi listeye ekler veya günceller; yeni kapandıysa duyurur.
+    private func anketiYerlestir(_ anket: Anket) {
+        if let sira = anketler.firstIndex(where: { $0.id == anket.id }) {
+            let eskisiAcikti = !anketler[sira].kapandi
+            anketler[sira] = anket
+            if anket.kapandi, eskisiAcikti { anketKapandi?(anket) }
+        } else {
+            anketler.append(anket)
+            if anket.kapandi { anketKapandi?(anket) }
+        }
+        // Kapanmışlar menü şeridinde birikmesin.
+        anketler.removeAll { $0.kapandi && $0.id != anket.id }
+    }
+
     // MARK: - Gelen mesajlar
 
     private func gelenIsle(_ veri: Data) {
@@ -323,6 +362,20 @@ final class SunucuIstemcisi {
         case .yanitGeldi:
             guard let gelen = try? zarf.veri(YanitGeldiVeri.self) else { return }
             yanitGeldi?(gelen)
+
+        case .anketGeldi:
+            guard let gelen = try? zarf.veri(AnketGeldiVeri.self) else { return }
+            anketGeldi?(gelen)
+
+        case .anketSonuc:
+            guard let gelen = try? zarf.veri(AnketSonucVeri.self) else { return }
+            anketiYerlestir(Anket(gelen))
+
+        case .acikAnketler:
+            guard let gelen = try? zarf.veri(AcikAnketlerVeri.self) else { return }
+            // Uyarı çıkarılmaz: bu bir olay değil, bağlanma anındaki durumdur.
+            // Aksi halde titrek bağlantıda aynı anket her seferinde çalardı.
+            for veri in gelen.anketler { anketiYerlestir(Anket(veri)) }
 
         case .bilgi:
             guard let gelen = try? zarf.veri(BilgiVeri.self) else { return }
