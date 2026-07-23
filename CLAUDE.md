@@ -444,6 +444,16 @@ altından zemini çeker: kopyalama yarıda kalırsa ne eski ne yeni uygulama kal
 (`kurulumBetigi`) ve o betik eski paketi silmez, **yeniden adlandırır** —
 kopya tutmazsa geri dönecek bir şey kalsın.
 
+**DMG `-plist` ile bağlanır, çıktısı ayrıştırılarak.** `hdiutil attach` çağrısına
+`-quiet` **verilmez**: `-quiet`, çıkış kodunu 0 bırakır ama bağlama noktası
+çıktısını da bastırır — geriye ayrıştıracak hiçbir şey kalmaz, `bagla` nokta
+bulamaz ve kurulum "İndirilen paket açılamadı" ile ölür. Bu hata bir kez
+yayınlandı (v0.1.7) çünkü indirme izole test edilmiş ama attach→kopyala zinciri
+uçtan uca hiç çalıştırılmamıştı. Kendi kendine güncellemeye dokunan her katkı
+gerçek bir DMG'yi indirip bağlamalı, "derlendi"yle yetinmemeli. `-quiet`, tıpkı
+SF Symbol'ün sessizce boş çizmesi gibi, hatayı çalışma anına erteleyen bir
+"sessizce boş çıktı" tuzağıdır.
+
 Kopya `ditto` ile yapılır; `cp -R` uygulama paketlerindeki sembolik bağları ve
 genişletilmiş öznitelikleri olduğu gibi taşımaz. Karantina bayrağı elle silinir,
 gerekçesi Cask'taki `postflight` ile aynı.

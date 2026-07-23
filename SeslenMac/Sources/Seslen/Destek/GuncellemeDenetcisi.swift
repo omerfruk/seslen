@@ -233,18 +233,28 @@ final class GuncellemeDenetcisi {
         // -nobrowse: birim Finder'da görünmesin, kullanıcı ortada duran bir
         // diski elle çıkarmaya çalışmasın. -mountrandom: sabit bir yol yerine
         // benzersiz dizin; aynı adlı bir birim zaten bağlıysa çakışmasın.
-        // `-noverify` bilerek kullanılmıyor: sağlama denetimi yarım inen ya da
-        // bozulmuş bir DMG'yi kurulmadan önce yakalar. Kazandırdığı saniye,
-        // bozuk bir uygulamayı yerine koymanın bedelini karşılamaz.
+        //
+        // -plist: bağlama noktasını sekmeli metinden değil yapısal olarak okuruz.
+        // Eski hâl iki yönden hataliydi ve kurulum tam burada "paket açılamadı"
+        // ile ölüyordu: `-quiet`, attach'ın bağlama noktası çıktısını da
+        // bastırıyordu — çıkış kodu 0 olsa bile ayrıştıracak tek satır kalmıyor,
+        // nokta bulunamıyor, baglanamadi fırlıyordu. Sekmeli metni elle bölmek
+        // ayrıca kırılgandı; plist tek anlamlı ve kararlı.
+        //
+        // -noverify bilerek yok: sağlama denetimi yarım inen ya da bozulmuş bir
+        // DMG'yi kurulmadan önce yakalar. Kazandırdığı saniye, bozuk bir
+        // uygulamayı yerine koymanın bedelini karşılamaz.
         let cikti = try kabuk("/usr/bin/hdiutil", [
-            "attach", dmg.path, "-nobrowse", "-quiet",
+            "attach", dmg.path, "-nobrowse", "-plist",
             "-mountrandom", NSTemporaryDirectory(),
         ])
-        // hdiutil çıktısı sekmeyle ayrılmış sütunlardır; bağlanma noktası son sütun.
-        guard let nokta = cikti
-            .split(separator: "\n")
-            .compactMap({ $0.components(separatedBy: "\t").last?.trimmingCharacters(in: .whitespaces) })
-            .last(where: { $0.hasPrefix("/") })
+        guard let veri = cikti.data(using: .utf8),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: veri, format: nil) as? [String: Any],
+              let varliklar = plist["system-entities"] as? [[String: Any]],
+              // Bir DMG'nin birkaç bölümü olabilir; bağlama noktası taşıyan ilki
+              // uygulamanın bulunduğu birimdir.
+              let nokta = varliklar.compactMap({ $0["mount-point"] as? String }).first
         else {
             throw GuncellemeHatasi.baglanamadi
         }
